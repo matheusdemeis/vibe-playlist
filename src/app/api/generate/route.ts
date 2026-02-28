@@ -9,6 +9,7 @@ const SPOTIFY_TRACKS_BATCH_SIZE = 100;
 type GenerateRequestBody = {
   artistName?: string;
   dryRun?: boolean;
+  limit?: number | string;
 };
 
 type SpotifyTrackSearchResponse = {
@@ -87,6 +88,7 @@ export async function POST(request: NextRequest) {
   const body = (await request.json()) as GenerateRequestBody;
   const artistName = body.artistName?.trim();
   const dryRun = body.dryRun === true;
+  const limit = resolveLimit(body.limit);
   if (!artistName) {
     return NextResponse.json({ error: "Artist name is required." }, { status: 400 });
   }
@@ -97,7 +99,7 @@ export async function POST(request: NextRequest) {
     const trackSearchParams = new URLSearchParams({
       q: artistName,
       type: "track",
-      limit: `${DEFAULT_TRACK_SEARCH_LIMIT}`,
+      limit: String(limit),
     });
     resolvedUrls.push(`${SPOTIFY_API_BASE_URL}/search?${trackSearchParams.toString()}`);
     const trackSearch = await spotifyRequest<SpotifyTrackSearchResponse>(
@@ -153,6 +155,16 @@ export async function POST(request: NextRequest) {
       { status: 502 },
     );
   }
+}
+
+function resolveLimit(value: number | string | undefined): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_TRACK_SEARCH_LIMIT;
+  }
+
+  const integer = Math.trunc(parsed);
+  return Math.min(50, Math.max(1, integer));
 }
 
 export async function addTracksInBatches(
