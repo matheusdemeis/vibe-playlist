@@ -61,7 +61,7 @@ describe("POST /api/generate", () => {
         "Content-Type": "application/json",
         Cookie: "spotify_access_token=test-token",
       },
-      body: JSON.stringify({ artistName: "Drake" }),
+      body: JSON.stringify({ query: "Drake" }),
     });
 
     const response = await POST(request);
@@ -102,7 +102,7 @@ describe("POST /api/generate", () => {
         "Content-Type": "application/json",
         Cookie: "spotify_access_token=test-token",
       },
-      body: JSON.stringify({ artistName: "Drake", dryRun: true }),
+      body: JSON.stringify({ query: "Drake", dryRun: true }),
     });
 
     const response = await POST(request);
@@ -120,5 +120,26 @@ describe("POST /api/generate", () => {
     expect(fetchMock.mock.calls[0]?.[0]).toContain("/v1/search?");
 
     fetchMock.mockRestore();
+  });
+
+  it("returns structured 400 when query is invalid", async () => {
+    const request = new NextRequest("http://localhost:5000/api/generate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: "spotify_access_token=test-token",
+      },
+      body: JSON.stringify({ query: "a" }),
+    });
+
+    const response = await POST(request);
+    const body = (await response.json()) as {
+      error: { message: string; status: number; details: Record<string, unknown> };
+    };
+
+    expect(response.status).toBe(400);
+    expect(body.error.status).toBe(400);
+    expect(body.error.message).toContain("at least 2 characters");
+    expect(body.error.details.field).toBe("query");
   });
 });

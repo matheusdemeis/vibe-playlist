@@ -7,9 +7,9 @@ const DEFAULT_TRACK_SEARCH_LIMIT = 25;
 const SPOTIFY_TRACKS_BATCH_SIZE = 100;
 
 type GenerateRequestBody = {
-  artistName?: string;
-  dryRun?: boolean;
-  limit?: number | string;
+  query?: unknown;
+  dryRun?: unknown;
+  limit?: unknown;
 };
 
 type SpotifyTrackSearchResponse = {
@@ -79,25 +79,23 @@ export async function POST(request: NextRequest) {
   });
   const accessToken = request.cookies.get(ACCESS_TOKEN_COOKIE_NAME)?.value;
   if (!accessToken) {
-    return NextResponse.json(
-      { error: "You are not connected to Spotify. Please log in first." },
-      { status: 401 },
-    );
+    return jsonError(401, "You are not connected to Spotify. Please log in first.");
   }
 
   const body = (await request.json()) as GenerateRequestBody;
-  const artistName = body.artistName?.trim();
-  const dryRun = body.dryRun === true;
-  const limit = resolveLimit(body.limit);
-  if (!artistName) {
-    return NextResponse.json({ error: "Artist name is required." }, { status: 400 });
+  const parsed = parseGenerateRequest(body);
+  if (!parsed.ok) {
+    return jsonError(400, parsed.message, parsed.details);
   }
+  const query = parsed.value.query;
+  const dryRun = parsed.value.dryRun;
+  const limit = parsed.value.limit;
 
   try {
     const resolvedUrls: string[] = [];
 
     const trackSearchParams = new URLSearchParams({
-      q: artistName,
+      q: query,
       type: "track",
       limit: String(limit),
     });
@@ -110,7 +108,7 @@ export async function POST(request: NextRequest) {
     const trackUris = trackSearch.tracks.items.map((track) => track.uri);
     if (trackUris.length === 0) {
       return NextResponse.json(
-        { error: "No recommendation tracks were returned for this artist." },
+        { error: "No tracks were returned for this query." },
         { status: 404 },
       );
     }
@@ -132,8 +130,8 @@ export async function POST(request: NextRequest) {
       {
         method: "POST",
         body: JSON.stringify({
-          name: `Vibe Playlist - ${artistName}`,
-          description: `Auto-generated from query: ${artistName}`,
+          name: `Vibe Playlist - ${query}`,
+          description: `Auto-generated from query: ${query}`,
           public: false,
         }),
       },
@@ -165,6 +163,41 @@ function resolveLimit(value: number | string | undefined): number {
 
   const integer = Math.trunc(parsed);
   return Math.min(50, Math.max(1, integer));
+}
+
+function parseGenerateRequest(body: GenerateRequestBody):
+  | { ok: true; value: { query: string; limit: number; dryRun: boolean } }
+  | { ok: false; message: string; details: Record<string, unknown> } {
+  const query = typeof body.query === "string" ? body.query.trim() : "";
+  if (query.length < 2) {
+    return {
+      ok: false,
+      message: "Query is required and must be at least 2 characters.",
+      details: { field: "query", minLength: 2 },
+    };
+  }
+
+  return {
+    ok: true,
+    value: {
+      query,
+      limit: resolveLimit(body.limit as number | string | undefined),
+      dryRun: body.dryRun === true,
+    },
+  };
+}
+
+function jsonError(status: number, message: string, details?: Record<string, unknown>) {
+  return NextResponse.json(
+    {
+      error: {
+        message,
+        status,
+        details: details ?? null,
+      },
+    },
+    { status },
+  );
 }
 
 export async function addTracksInBatches(
