@@ -179,7 +179,8 @@ export default function VibeResultsPage() {
       ) : null}
 
       {!requestParse.error && isLoading ? (
-        <section className="space-y-3">
+        <section aria-live="polite" aria-busy="true" className="space-y-3">
+          <p className="text-sm text-zinc-600">Generating tracks...</p>
           <div className="h-16 animate-pulse rounded-xl bg-zinc-100" />
           <div className="h-16 animate-pulse rounded-xl bg-zinc-100" />
           <div className="h-16 animate-pulse rounded-xl bg-zinc-100" />
@@ -187,12 +188,15 @@ export default function VibeResultsPage() {
       ) : null}
 
       {!requestParse.error && !isLoading && errorMessage ? (
-        <section className="space-y-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+        <section
+          aria-live="assertive"
+          className="space-y-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"
+        >
           <p>{errorMessage}</p>
           <button
             type="button"
             onClick={() => void fetchResults()}
-            className="rounded-full bg-red-700 px-4 py-2 text-white hover:bg-red-600"
+            className="rounded-full bg-red-700 px-4 py-2 text-white hover:bg-red-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-500"
           >
             Retry
           </button>
@@ -207,33 +211,33 @@ export default function VibeResultsPage() {
 
       {!requestParse.error && !isLoading && !errorMessage && tracks.length > 0 ? (
         <section className="space-y-4">
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm text-zinc-700">
               Generated {tracks.length} tracks.
             </p>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <button
                 type="button"
                 onClick={() => void fetchResults()}
-                className="rounded-full border border-zinc-300 px-4 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-100"
+                className="rounded-full border border-zinc-300 px-4 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-500"
               >
                 Regenerate
               </button>
               <button
                 type="button"
                 onClick={handleShuffle}
-                className="rounded-full border border-zinc-300 px-4 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-100"
+                className="rounded-full border border-zinc-300 px-4 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-500"
               >
                 Shuffle Order
               </button>
             </div>
           </div>
 
-          <ul className="space-y-2">
+          <ul className="space-y-2" aria-live="polite">
             {tracks.map((track) => (
               <li
                 key={track.id}
-                className="flex items-center gap-3 rounded-xl border border-zinc-200 p-3"
+                className="flex flex-col gap-3 rounded-xl border border-zinc-200 p-3 sm:flex-row sm:items-center"
               >
                 {track.image ? (
                   // eslint-disable-next-line @next/next/no-img-element
@@ -264,7 +268,8 @@ export default function VibeResultsPage() {
                 <button
                   type="button"
                   onClick={() => handleToggleLock(track.id)}
-                  className={`rounded-full border px-3 py-1.5 text-xs ${
+                  aria-pressed={lockedTrackIds.includes(track.id)}
+                  className={`rounded-full border px-3 py-1.5 text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-500 ${
                     lockedTrackIds.includes(track.id)
                       ? "border-zinc-900 bg-zinc-900 text-white"
                       : "border-zinc-300 text-zinc-700 hover:bg-zinc-100"
@@ -275,7 +280,7 @@ export default function VibeResultsPage() {
                 <button
                   type="button"
                   onClick={() => handleRemoveTrack(track.id)}
-                  className="rounded-full border border-zinc-300 px-3 py-1.5 text-xs text-zinc-700 hover:bg-zinc-100"
+                  className="rounded-full border border-zinc-300 px-3 py-1.5 text-xs text-zinc-700 hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-500"
                 >
                   Remove
                 </button>
@@ -288,7 +293,7 @@ export default function VibeResultsPage() {
       <div className="mt-5">
         <Link
           href={queryString ? `/vibe?${queryString}` : "/vibe"}
-          className="inline-flex rounded-full bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700"
+          className="inline-flex rounded-full bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-500"
         >
           Back to Builder
         </Link>
