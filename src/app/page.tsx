@@ -3,23 +3,35 @@
 import { useEffect, useState } from "react";
 
 type GenerateResponse = {
-  playlistUrl: string;
-  playlistId: string;
-  trackCount: number;
+  tracks: Array<{
+    id: string;
+    name: string;
+    artists: string[];
+    albumImage: string | null;
+    uri: string;
+    preview_url: string | null;
+  }>;
 };
 
 type ErrorResponse = {
-  error?: string;
+  error?:
+    | string
+    | {
+        message?: string;
+        status?: number;
+        details?: unknown;
+      };
 };
 
 type GenerateStatus = "idle" | "loading" | "success" | "error";
 
 export default function Home() {
   const [isConnected, setIsConnected] = useState<boolean | null>(null);
-  const [artistName, setArtistName] = useState("");
+  const [query, setQuery] = useState("");
+  const [limit, setLimit] = useState(25);
   const [isGenerating, setIsGenerating] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const [playlist, setPlaylist] = useState<GenerateResponse | null>(null);
+  const [tracks, setTracks] = useState<GenerateResponse["tracks"]>([]);
   const [status, setStatus] = useState<GenerateStatus>("idle");
 
   useEffect(() => {
@@ -38,17 +50,17 @@ export default function Home() {
   }, []);
 
   const handleGeneratePlaylist = async () => {
-    const trimmedArtist = artistName.trim();
-    if (!trimmedArtist) {
-      setMessage("Please enter an artist name.");
-      setPlaylist(null);
+    const trimmedQuery = query.trim();
+    if (!trimmedQuery) {
+      setMessage("Please enter a search query.");
+      setTracks([]);
       return;
     }
 
     setIsGenerating(true);
     setStatus("loading");
     setMessage(null);
-    setPlaylist(null);
+    setTracks([]);
 
     try {
       const response = await fetch("/api/generate", {
@@ -56,22 +68,26 @@ export default function Home() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ artistName: trimmedArtist }),
+        body: JSON.stringify({ query: trimmedQuery, limit }),
       });
       const data = (await response.json()) as GenerateResponse | ErrorResponse;
 
       if (!response.ok) {
-        const errorMessage = "error" in data ? data.error : undefined;
-        setMessage(errorMessage ?? "Could not generate playlist.");
+        const errorValue = "error" in data ? data.error : undefined;
+        const errorMessage =
+          typeof errorValue === "string"
+            ? errorValue
+            : errorValue?.message ?? "Could not generate tracks.";
+        setMessage(errorMessage);
         setStatus("error");
         return;
       }
 
-      setPlaylist(data as GenerateResponse);
-      setMessage("Playlist created successfully.");
+      setTracks((data as GenerateResponse).tracks);
+      setMessage("Tracks generated successfully.");
       setStatus("success");
     } catch {
-      setMessage("Unexpected error while generating playlist. Please try again.");
+      setMessage("Unexpected error while generating tracks. Please try again.");
       setStatus("error");
     } finally {
       setIsGenerating(false);
@@ -95,9 +111,17 @@ export default function Home() {
         <div className="flex w-full flex-col gap-3">
           <input
             className="w-full rounded-lg border border-zinc-300 px-4 py-3 text-zinc-900 outline-none focus:border-zinc-500"
-            placeholder="Enter artist name"
-            value={artistName}
-            onChange={(event) => setArtistName(event.target.value)}
+            placeholder="Enter artist or track (e.g. Drake)"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          <input
+            className="w-full rounded-lg border border-zinc-300 px-4 py-3 text-zinc-900 outline-none focus:border-zinc-500"
+            type="number"
+            min={1}
+            max={50}
+            value={limit}
+            onChange={(event) => setLimit(Number(event.target.value))}
           />
           <button
             className="rounded-full bg-zinc-900 px-6 py-3 text-white transition-colors hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-400"
@@ -109,24 +133,33 @@ export default function Home() {
           </button>
         </div>
         {message ? <p className="text-sm text-zinc-700">{message}</p> : null}
-        {status === "success" && playlist ? (
+        {status === "success" && tracks.length > 0 ? (
           <div className="w-full rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-left text-sm text-emerald-800">
-            <p className="font-medium">Playlist generated successfully.</p>
-            <p>{playlist.trackCount} tracks were added to your Spotify playlist.</p>
+            <p className="font-medium">Tracks generated successfully.</p>
+            <p>{tracks.length} tracks were found from Spotify Search.</p>
           </div>
         ) : null}
-        {playlist ? (
-          <p className="text-sm text-zinc-700">
-            Playlist ready ({playlist.trackCount} tracks):{" "}
-            <a
-              className="font-medium text-zinc-900 underline"
-              href={playlist.playlistUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Open in Spotify
-            </a>
-          </p>
+        {tracks.length > 0 ? (
+          <ul className="w-full space-y-2 text-left">
+            {tracks.map((track) => (
+              <li key={track.id} className="flex items-center gap-3 rounded-xl border border-zinc-200 p-3">
+                {track.albumImage ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={track.albumImage}
+                    alt={track.name}
+                    className="h-10 w-10 rounded-md object-cover"
+                  />
+                ) : (
+                  <div className="h-10 w-10 rounded-md bg-zinc-100" />
+                )}
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-zinc-900">{track.name}</p>
+                  <p className="truncate text-xs text-zinc-600">{track.artists.join(", ")}</p>
+                </div>
+              </li>
+            ))}
+          </ul>
         ) : null}
       </main>
     </div>
