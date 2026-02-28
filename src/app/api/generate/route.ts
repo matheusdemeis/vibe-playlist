@@ -30,7 +30,19 @@ async function spotifyRequest<T>(
   accessToken: string,
   init?: RequestInit,
 ): Promise<T> {
-  const response = await fetch(`${SPOTIFY_API_BASE_URL}${path}`, {
+  const url = `${SPOTIFY_API_BASE_URL}${path}`;
+  const method = init?.method ?? "GET";
+  traceGenerate("spotify_request_start", {
+    url,
+    method,
+    headers: {
+      ...(init?.headers ?? {}),
+      Authorization: accessToken ? "Bearer [REDACTED]" : undefined,
+      "Content-Type": "application/json",
+    },
+  });
+
+  const response = await fetch(url, {
     ...init,
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -41,13 +53,24 @@ async function spotifyRequest<T>(
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`Spotify API request failed (${response.status}): ${errorText}`);
+    traceGenerate("spotify_request_error", {
+      url,
+      method,
+      status: response.status,
+      body: errorText,
+    });
+    throw new Error(`Spotify API request failed (${response.status}) @ ${url}: ${errorText}`);
   }
 
+  traceGenerate("spotify_request_success", { url, method, status: response.status });
   return (await response.json()) as T;
 }
 
 export async function POST(request: NextRequest) {
+  traceGenerate("api_generate_incoming", {
+    method: request.method,
+    url: request.url,
+  });
   const accessToken = request.cookies.get(ACCESS_TOKEN_COOKIE_NAME)?.value;
   if (!accessToken) {
     return NextResponse.json(
@@ -131,4 +154,12 @@ export async function POST(request: NextRequest) {
       { status: 502 },
     );
   }
+}
+
+function traceGenerate(event: string, payload: Record<string, unknown>): void {
+  if (process.env.DEBUG_GENERATE_TRACE !== "true") {
+    return;
+  }
+
+  console.log(`[TRACE][generate] ${event}`, payload);
 }
