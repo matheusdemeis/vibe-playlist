@@ -10,6 +10,7 @@ import {
   type TempoOption,
   type VibeBuilderInput,
 } from "@/lib/vibe-builder";
+import { deletePreset, listPresets, savePreset, type Preset } from "@/lib/storage/vibe-data";
 
 function readStateFromQuery(): VibeBuilderInput {
   if (typeof window === "undefined") {
@@ -43,6 +44,11 @@ function readStateFromQuery(): VibeBuilderInput {
 
 export default function VibePage() {
   const [state, setState] = useState<VibeBuilderInput>(() => readStateFromQuery());
+  const [presetName, setPresetName] = useState("");
+  const [presets, setPresets] = useState<Preset[]>(() =>
+    typeof window === "undefined" ? [] : listPresets(),
+  );
+  const [presetError, setPresetError] = useState<string | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams();
@@ -71,6 +77,28 @@ export default function VibePage() {
     return [...values, value];
   };
 
+  const handleSavePreset = () => {
+    const name = presetName.trim();
+    if (!name) {
+      setPresetError("Preset name is required.");
+      return;
+    }
+
+    savePreset(name, state);
+    setPresets(listPresets());
+    setPresetName("");
+    setPresetError(null);
+  };
+
+  const handleApplyPreset = (preset: Preset) => {
+    setState(preset.settings);
+  };
+
+  const handleDeletePreset = (presetId: string) => {
+    deletePreset(presetId);
+    setPresets(listPresets());
+  };
+
   const resultQuery = useMemo(() => {
     const params = new URLSearchParams();
     params.set("vibes", state.vibes.join(","));
@@ -93,6 +121,62 @@ export default function VibePage() {
       </header>
 
       <section className="space-y-7">
+        <div className="space-y-3 rounded-xl border border-zinc-200 p-4">
+          <h2 className="text-sm font-medium text-zinc-900">Saved Presets</h2>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <input
+              value={presetName}
+              onChange={(event) => setPresetName(event.target.value)}
+              placeholder="Preset name"
+              className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm text-zinc-900"
+            />
+            <button
+              type="button"
+              onClick={handleSavePreset}
+              className="rounded-full bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700"
+            >
+              Save Preset
+            </button>
+          </div>
+          {presetError ? <p className="text-xs text-red-700">{presetError}</p> : null}
+
+          {presets.length > 0 ? (
+            <ul className="space-y-2">
+              {presets.map((preset) => (
+                <li
+                  key={preset.id}
+                  className="flex flex-col gap-2 rounded-lg border border-zinc-200 p-3 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div>
+                    <p className="text-sm font-medium text-zinc-900">{preset.name}</p>
+                    <p className="text-xs text-zinc-600">
+                      {new Date(preset.createdAt).toLocaleDateString()}
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleApplyPreset(preset)}
+                      className="rounded-full border border-zinc-300 px-3 py-1.5 text-xs text-zinc-700 hover:bg-zinc-100"
+                    >
+                      Apply
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeletePreset(preset.id)}
+                      className="rounded-full border border-red-300 px-3 py-1.5 text-xs text-red-700 hover:bg-red-50"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-xs text-zinc-600">No presets yet.</p>
+          )}
+        </div>
+
         <fieldset className="space-y-3">
           <legend className="text-sm font-medium text-zinc-900">Vibe / Mood Presets</legend>
           <div className="flex flex-wrap gap-2" role="group" aria-label="Vibe mood presets">
