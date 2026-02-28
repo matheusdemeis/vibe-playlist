@@ -24,6 +24,11 @@ export type SpotifyRecommendationParams = {
   target_tempo?: number;
 };
 
+export type SpotifyTrack = {
+  id: string;
+  artists: Array<{ id: string; name: string }>;
+};
+
 export function mapVibeToRecommendationParams(
   input: VibeRecommendationInput,
 ): SpotifyRecommendationParams {
@@ -46,6 +51,55 @@ export function mapVibeToRecommendationParams(
   }
 
   return params;
+}
+
+export function dedupeTracksById(tracks: SpotifyTrack[]): SpotifyTrack[] {
+  const seenIds = new Set<string>();
+  const deduped: SpotifyTrack[] = [];
+
+  for (const track of tracks) {
+    if (seenIds.has(track.id)) {
+      continue;
+    }
+
+    seenIds.add(track.id);
+    deduped.push(track);
+  }
+
+  return deduped;
+}
+
+export function limitTracksPerArtist(
+  tracks: SpotifyTrack[],
+  maxPerArtist: number,
+  targetCount: number,
+): SpotifyTrack[] {
+  if (maxPerArtist < 1) {
+    return tracks.slice(0, targetCount);
+  }
+
+  const selected: SpotifyTrack[] = [];
+  const overflow: SpotifyTrack[] = [];
+  const artistCounts = new Map<string, number>();
+
+  for (const track of tracks) {
+    const primaryArtistId = track.artists[0]?.id ?? track.id;
+    const currentCount = artistCounts.get(primaryArtistId) ?? 0;
+
+    if (currentCount < maxPerArtist) {
+      selected.push(track);
+      artistCounts.set(primaryArtistId, currentCount + 1);
+      continue;
+    }
+
+    overflow.push(track);
+  }
+
+  if (selected.length >= targetCount) {
+    return selected.slice(0, targetCount);
+  }
+
+  return [...selected, ...overflow].slice(0, targetCount);
 }
 
 function normalizePercent(value: number): number {
