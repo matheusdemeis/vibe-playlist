@@ -4,28 +4,24 @@ import { formatSpotifyApiErrorMessage } from "../../../lib/spotify/error";
 const ACCESS_TOKEN_COOKIE_NAME = "spotify_access_token";
 const SPOTIFY_API_BASE_URL = "https://api.spotify.com/v1";
 const DEFAULT_TRACK_SEARCH_LIMIT = 25;
-const SPOTIFY_TRACKS_BATCH_SIZE = 100;
 
 type GenerateRequestBody = {
   query?: unknown;
-  dryRun?: unknown;
   limit?: unknown;
 };
 
 type SpotifyTrackSearchResponse = {
   tracks: {
-    items: Array<{ uri: string }>;
-  };
-};
-
-type SpotifyMeResponse = {
-  id: string;
-};
-
-type SpotifyCreatePlaylistResponse = {
-  id: string;
-  external_urls: {
-    spotify: string;
+    items: Array<{
+      id: string;
+      name: string;
+      uri: string;
+      preview_url: string | null;
+      artists: Array<{ name: string }>;
+      album: {
+        images: Array<{ url: string }>;
+      };
+    }>;
   };
 };
 
@@ -113,18 +109,14 @@ export async function POST(request: NextRequest) {
     return jsonError(400, parsed.message, parsed.details);
   }
   const query = parsed.value.query;
-  const dryRun = parsed.value.dryRun;
   const limit = parsed.value.limit;
 
   try {
-    const resolvedUrls: string[] = [];
-
     const trackSearchParams = new URLSearchParams({
       q: query,
       type: "track",
       limit: String(limit),
     });
-    resolvedUrls.push(`${SPOTIFY_API_BASE_URL}/search?${trackSearchParams.toString()}`);
     const trackSearch = await spotifyRequest<SpotifyTrackSearchResponse>(
       `/search?${trackSearchParams.toString()}`,
       accessToken,
@@ -133,57 +125,15 @@ export async function POST(request: NextRequest) {
       return jsonError(trackSearch.error.status, trackSearch.error.message, trackSearch.error.details);
     }
 
-    const trackUris = trackSearch.data.tracks.items.map((track) => track.uri);
-    if (trackUris.length === 0) {
-      return NextResponse.json(
-        { error: "No tracks were returned for this query." },
-        { status: 404 },
-      );
-    }
-
-    if (dryRun) {
-      return NextResponse.json({
-        dryRun: true,
-        resolvedUrls,
-        trackCount: trackUris.length,
-      });
-    }
-
-    resolvedUrls.push(`${SPOTIFY_API_BASE_URL}/me`);
-    const me = await spotifyRequest<SpotifyMeResponse>("/me", accessToken);
-    if (!me.ok) {
-      return jsonError(me.error.status, me.error.message, me.error.details);
-    }
-    resolvedUrls.push(`${SPOTIFY_API_BASE_URL}/users/${me.data.id}/playlists`);
-    const createdPlaylist = await spotifyRequest<SpotifyCreatePlaylistResponse>(
-      `/users/${me.data.id}/playlists`,
-      accessToken,
-      {
-        method: "POST",
-        body: JSON.stringify({
-          name: `Vibe Playlist - ${query}`,
-          description: `Auto-generated from query: ${query}`,
-          public: false,
-        }),
-      },
-    );
-    if (!createdPlaylist.ok) {
-      return jsonError(
-        createdPlaylist.error.status,
-        createdPlaylist.error.message,
-        createdPlaylist.error.details,
-      );
-    }
-
-    const addTracksError = await addTracksInBatches(createdPlaylist.data.id, trackUris, accessToken);
-    if (addTracksError) {
-      return jsonError(addTracksError.status, addTracksError.message, addTracksError.details);
-    }
-
     return NextResponse.json({
-      playlistUrl: createdPlaylist.data.external_urls.spotify,
-      playlistId: createdPlaylist.data.id,
-      trackCount: trackUris.length,
+      tracks: trackSearch.data.tracks.items.map((track) => ({
+        id: track.id,
+        name: track.name,
+        artists: track.artists.map((artist) => artist.name),
+        albumImage: track.album.images[0]?.url ?? null,
+        uri: track.uri,
+        preview_url: track.preview_url,
+      })),
     });
   } catch (error) {
     const message =
@@ -204,7 +154,7 @@ function resolveLimit(value: number | string | undefined): number {
 }
 
 function parseGenerateRequest(body: GenerateRequestBody):
-  | { ok: true; value: { query: string; limit: number; dryRun: boolean } }
+  | { ok: true; value: { query: string; limit: number } }
   | { ok: false; message: string; details: Record<string, unknown> } {
   const query = typeof body.query === "string" ? body.query.trim() : "";
   if (query.length < 2) {
@@ -220,7 +170,6 @@ function parseGenerateRequest(body: GenerateRequestBody):
     value: {
       query,
       limit: resolveLimit(body.limit as number | string | undefined),
-      dryRun: body.dryRun === true,
     },
   };
 }
@@ -236,29 +185,6 @@ function jsonError(status: number, message: string, details?: Record<string, unk
     },
     { status },
   );
-}
-
-export async function addTracksInBatches(
-  playlistId: string,
-  trackUris: string[],
-  accessToken: string,
-): Promise<SpotifyRequestFailure | null> {
-  for (let index = 0; index < trackUris.length; index += SPOTIFY_TRACKS_BATCH_SIZE) {
-    const uris = trackUris.slice(index, index + SPOTIFY_TRACKS_BATCH_SIZE);
-    const added = await spotifyRequest<{ snapshot_id: string }>(
-      `/playlists/${playlistId}/tracks`,
-      accessToken,
-      {
-        method: "POST",
-        body: JSON.stringify({ uris }),
-      },
-    );
-    if (!added.ok) {
-      return added.error;
-    }
-  }
-
-  return null;
 }
 
 function traceGenerate(event: string, payload: Record<string, unknown>): void {
