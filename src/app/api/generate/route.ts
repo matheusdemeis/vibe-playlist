@@ -14,8 +14,10 @@ type SpotifyArtistSearchResponse = {
   };
 };
 
-type SpotifyRecommendationsResponse = {
-  tracks: Array<{ uri: string }>;
+type SpotifyTrackSearchResponse = {
+  tracks: {
+    items: Array<{ uri: string }>;
+  };
 };
 
 type SpotifyCreatePlaylistResponse = {
@@ -101,16 +103,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: `Artist "${artistName}" was not found.` }, { status: 404 });
     }
 
-    const recommendationParams = new URLSearchParams({
-      seed_artists: artist.id,
+    const trackSearchParams = new URLSearchParams({
+      q: `artist:"${artist.name}"`,
+      type: "track",
       limit: `${DEFAULT_RECOMMENDATION_LIMIT}`,
     });
-    const recommendations = await spotifyRequest<SpotifyRecommendationsResponse>(
-      `/recommendations?${recommendationParams.toString()}`,
+    const trackSearch = await spotifyRequest<SpotifyTrackSearchResponse>(
+      `/search?${trackSearchParams.toString()}`,
       accessToken,
     );
 
-    const trackUris = recommendations.tracks.map((track) => track.uri);
+    const trackUris = trackSearch.tracks.items.map((track) => track.uri);
     if (trackUris.length === 0) {
       return NextResponse.json(
         { error: "No recommendation tracks were returned for this artist." },
