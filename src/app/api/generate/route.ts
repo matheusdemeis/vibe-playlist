@@ -3,22 +3,21 @@ import { formatSpotifyApiErrorMessage } from "@/lib/spotify/error";
 
 const ACCESS_TOKEN_COOKIE_NAME = "spotify_access_token";
 const SPOTIFY_API_BASE_URL = "https://api.spotify.com/v1";
-const DEFAULT_RECOMMENDATION_LIMIT = 20;
+const DEFAULT_TRACK_SEARCH_LIMIT = 25;
+const SPOTIFY_TRACKS_BATCH_SIZE = 100;
 
 type GenerateRequestBody = {
   artistName?: string;
-};
-
-type SpotifyArtistSearchResponse = {
-  artists: {
-    items: Array<{ id: string; name: string }>;
-  };
 };
 
 type SpotifyTrackSearchResponse = {
   tracks: {
     items: Array<{ uri: string }>;
   };
+};
+
+type SpotifyMeResponse = {
+  id: string;
 };
 
 type SpotifyCreatePlaylistResponse = {
@@ -91,25 +90,10 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const searchParams = new URLSearchParams({
-      q: artistName,
-      type: "artist",
-      limit: "1",
-    });
-    const searchData = await spotifyRequest<SpotifyArtistSearchResponse>(
-      `/search?${searchParams.toString()}`,
-      accessToken,
-    );
-
-    const artist = searchData.artists.items[0];
-    if (!artist) {
-      return NextResponse.json({ error: `Artist "${artistName}" was not found.` }, { status: 404 });
-    }
-
     const trackSearchParams = new URLSearchParams({
-      q: `artist:"${artist.name}"`,
+      q: artistName,
       type: "track",
-      limit: `${DEFAULT_RECOMMENDATION_LIMIT}`,
+      limit: `${DEFAULT_TRACK_SEARCH_LIMIT}`,
     });
     const trackSearch = await spotifyRequest<SpotifyTrackSearchResponse>(
       `/search?${trackSearchParams.toString()}`,
@@ -124,27 +108,21 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const me = await spotifyRequest<SpotifyMeResponse>("/me", accessToken);
     const createdPlaylist = await spotifyRequest<SpotifyCreatePlaylistResponse>(
-      "/me/playlists",
+      `/users/${me.id}/playlists`,
       accessToken,
       {
         method: "POST",
         body: JSON.stringify({
-          name: `Vibe Playlist - ${artist.name}`,
-          description: `Auto-generated from artist seed: ${artist.name}`,
+          name: `Vibe Playlist - ${artistName}`,
+          description: `Auto-generated from query: ${artistName}`,
           public: false,
         }),
       },
     );
 
-    await spotifyRequest<{ snapshot_id: string }>(
-      `/playlists/${createdPlaylist.id}/tracks`,
-      accessToken,
-      {
-        method: "POST",
-        body: JSON.stringify({ uris: trackUris }),
-      },
-    );
+    await addTracksInBatches(createdPlaylist.id, trackUris, accessToken);
 
     return NextResponse.json({
       playlistUrl: createdPlaylist.external_urls.spotify,
@@ -158,6 +136,24 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       { error: message },
       { status: 502 },
+    );
+  }
+}
+
+async function addTracksInBatches(
+  playlistId: string,
+  trackUris: string[],
+  accessToken: string,
+): Promise<void> {
+  for (let index = 0; index < trackUris.length; index += SPOTIFY_TRACKS_BATCH_SIZE) {
+    const uris = trackUris.slice(index, index + SPOTIFY_TRACKS_BATCH_SIZE);
+    await spotifyRequest<{ snapshot_id: string }>(
+      `/playlists/${playlistId}/tracks`,
+      accessToken,
+      {
+        method: "POST",
+        body: JSON.stringify({ uris }),
+      },
     );
   }
 }
