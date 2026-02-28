@@ -7,6 +7,7 @@ import {
   TEMPO_OPTIONS,
   TRACK_COUNT_OPTIONS,
   VIBE_PRESETS,
+  validateVibeBuilderInput,
   type TempoOption,
   type VibeBuilderInput,
 } from "@/lib/vibe-builder";
@@ -84,10 +85,20 @@ export default function VibePage() {
       return;
     }
 
-    savePreset(name, state);
-    setPresets(listPresets());
-    setPresetName("");
-    setPresetError(null);
+    const validation = validateVibeBuilderInput(state);
+    if (!validation.isValid) {
+      setPresetError(validation.errors[0] ?? "Preset settings are invalid.");
+      return;
+    }
+
+    try {
+      savePreset(name, state);
+      setPresets(listPresets());
+      setPresetName("");
+      setPresetError(null);
+    } catch (error) {
+      setPresetError(error instanceof Error ? error.message : "Could not save preset.");
+    }
   };
 
   const handleApplyPreset = (preset: Preset) => {
@@ -122,7 +133,10 @@ export default function VibePage() {
 
       <section className="space-y-7">
         <div className="space-y-3 rounded-xl border border-zinc-200 p-4">
-          <h2 className="text-sm font-medium text-zinc-900">Saved Presets</h2>
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-medium text-zinc-900">Saved Presets</h2>
+            <span className="text-xs text-zinc-500">{presets.length}/20</span>
+          </div>
           <div className="flex flex-col gap-2 sm:flex-row">
             <input
               value={presetName}

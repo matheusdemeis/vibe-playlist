@@ -3,6 +3,7 @@ import type { VibeBuilderInput } from "@/lib/vibe-builder";
 const PRESETS_KEY = "vibe_builder_presets_v1";
 const HISTORY_KEY = "vibe_builder_history_v1";
 const HISTORY_LIMIT = 10;
+const PRESET_LIMIT = 20;
 
 export type Preset = {
   id: string;
@@ -40,15 +41,21 @@ export function listPresets(storage = getBrowserStorage()): Preset[] {
 }
 
 export function savePreset(name: string, settings: VibeBuilderInput, storage = getBrowserStorage()): Preset {
+  const normalizedName = name.trim();
+  if (!normalizedName) {
+    throw new Error("Preset name is required.");
+  }
+
   const presets = listPresets(storage);
+  const existing = presets.filter((preset) => preset.name.toLowerCase() !== normalizedName.toLowerCase());
   const preset: Preset = {
     id: createId(),
-    name: name.trim(),
+    name: normalizedName,
     settings,
     createdAt: new Date().toISOString(),
   };
 
-  const next = [preset, ...presets];
+  const next = [preset, ...existing].slice(0, PRESET_LIMIT);
   writeJson(storage, PRESETS_KEY, next);
   return preset;
 }

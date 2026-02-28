@@ -35,18 +35,26 @@ export default function VibeHistoryPage() {
                     {new Date(entry.createdAt).toLocaleString()}
                   </p>
                 </div>
-                {entry.playlist ? (
-                  <a
-                    href={entry.playlist.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex rounded-full bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-zinc-700"
+                <div className="flex gap-2">
+                  <Link
+                    href={`/vibe?${buildSettingsQuery(entry)}`}
+                    className="inline-flex rounded-full border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-100"
                   >
-                    Open Playlist
-                  </a>
-                ) : (
-                  <span className="text-xs text-zinc-500">Not saved to Spotify</span>
-                )}
+                    Reuse Settings
+                  </Link>
+                  {entry.playlist ? (
+                    <a
+                      href={entry.playlist.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex rounded-full bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-zinc-700"
+                    >
+                      Open Playlist
+                    </a>
+                  ) : (
+                    <span className="inline-flex items-center text-xs text-zinc-500">Not saved</span>
+                  )}
+                </div>
               </div>
 
               <div className="space-y-1">
@@ -74,4 +82,21 @@ export default function VibeHistoryPage() {
       </div>
     </main>
   );
+}
+
+function buildSettingsQuery(entry: HistoryItem): string {
+  const params = new URLSearchParams();
+  if (entry.settings.vibes.length > 0) {
+    params.set("vibes", entry.settings.vibes.join(","));
+  }
+  if (entry.settings.genres.length > 0) {
+    params.set("genres", entry.settings.genres.join(","));
+  }
+  params.set("energy", String(entry.settings.energy));
+  params.set("valence", String(entry.settings.valence));
+  params.set("tempo", entry.settings.tempo);
+  params.set("trackCount", String(entry.settings.trackCount));
+  params.set("explicit", String(entry.settings.explicit));
+
+  return params.toString();
 }

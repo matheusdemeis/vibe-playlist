@@ -34,6 +34,16 @@ describe("vibe storage helpers", () => {
     expect(listPresets(storage)).toEqual([]);
   });
 
+  it("replaces duplicate preset name and keeps list bounded", () => {
+    const storage = new MemoryStorage();
+    savePreset("Focus", { ...DEFAULT_VIBE_INPUT, energy: 20 }, storage);
+    savePreset("focus", { ...DEFAULT_VIBE_INPUT, energy: 80 }, storage);
+
+    const presets = listPresets(storage);
+    expect(presets).toHaveLength(1);
+    expect(presets[0]?.settings.energy).toBe(80);
+  });
+
   it("keeps only 10 history entries", () => {
     const storage = new MemoryStorage();
 
