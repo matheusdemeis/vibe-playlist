@@ -17,6 +17,17 @@ type GenerateVibeApiError = {
   code: string;
 };
 
+type SavePlaylistApiError = {
+  error: string;
+  code: string;
+};
+
+type SavePlaylistApiSuccess = {
+  playlistId: string;
+  playlistUrl: string;
+  addedTrackCount: number;
+};
+
 function readRequestInput(params: URLSearchParams): VibeBuilderInput {
   const vibes = params.get("vibes")?.split(",").filter(Boolean) ?? [];
   const genres = params.get("genres")?.split(",").filter(Boolean) ?? [];
@@ -53,6 +64,9 @@ export default function VibeResultsPage() {
   const [playlistName, setPlaylistName] = useState("");
   const [playlistDescription, setPlaylistDescription] = useState("");
   const [isPublicPlaylist, setIsPublicPlaylist] = useState(false);
+  const [isSavingPlaylist, setIsSavingPlaylist] = useState(false);
+  const [saveErrorMessage, setSaveErrorMessage] = useState<string | null>(null);
+  const [saveResult, setSaveResult] = useState<SavePlaylistApiSuccess | null>(null);
 
   const queryString = searchParams.toString();
   const requestParse = useMemo(() => {
@@ -183,6 +197,52 @@ export default function VibeResultsPage() {
     });
   };
 
+  const handleSaveToSpotify = async () => {
+    if (tracks.length === 0) {
+      setSaveErrorMessage("No tracks available to save.");
+      return;
+    }
+
+    const trimmedName = playlistName.trim();
+    if (!trimmedName) {
+      setSaveErrorMessage("Playlist name is required.");
+      return;
+    }
+
+    setIsSavingPlaylist(true);
+    setSaveErrorMessage(null);
+    setSaveResult(null);
+
+    try {
+      const response = await fetch("/api/vibe/save", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: trimmedName,
+          description: playlistDescription.trim(),
+          isPublic: isPublicPlaylist,
+          trackUris: tracks.map((track) => track.uri),
+        }),
+      });
+
+      if (!response.ok) {
+        const data = (await response.json()) as SavePlaylistApiError;
+        setSaveErrorMessage(data.error ?? "Could not save playlist.");
+        return;
+      }
+
+      const data = (await response.json()) as SavePlaylistApiSuccess;
+      setSaveResult(data);
+      setIsSaveModalOpen(false);
+    } catch {
+      setSaveErrorMessage("Could not save playlist right now.");
+    } finally {
+      setIsSavingPlaylist(false);
+    }
+  };
+
   useEffect(() => {
     if (tracks.length === 0) {
       return;
@@ -247,6 +307,20 @@ export default function VibeResultsPage() {
 
       {!requestParse.error && !isLoading && !errorMessage && tracks.length > 0 ? (
         <section className="space-y-4">
+          {saveResult ? (
+            <div className="space-y-2 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
+              <p>Playlist saved with {saveResult.addedTrackCount} tracks.</p>
+              <a
+                href={saveResult.playlistUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex rounded-full bg-emerald-700 px-4 py-2 text-xs font-medium text-white hover:bg-emerald-600"
+              >
+                Open in Spotify
+              </a>
+            </div>
+          ) : null}
+
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm text-zinc-700">
               Generated {tracks.length} tracks.
@@ -268,7 +342,10 @@ export default function VibeResultsPage() {
               </button>
               <button
                 type="button"
-                onClick={() => setIsSaveModalOpen(true)}
+                onClick={() => {
+                  setSaveErrorMessage(null);
+                  setIsSaveModalOpen(true);
+                }}
                 className="rounded-full bg-zinc-900 px-4 py-2 text-xs font-medium text-white hover:bg-zinc-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-500"
               >
                 Save to Spotify
@@ -395,18 +472,32 @@ export default function VibeResultsPage() {
               <button
                 type="button"
                 onClick={() => setIsSaveModalOpen(false)}
+                disabled={isSavingPlaylist}
                 className="rounded-full border border-zinc-300 px-4 py-2 text-sm text-zinc-700 hover:bg-zinc-100"
               >
                 Cancel
               </button>
               <button
                 type="button"
-                disabled
-                className="rounded-full bg-zinc-300 px-4 py-2 text-sm text-white"
+                onClick={() => void handleSaveToSpotify()}
+                disabled={isSavingPlaylist}
+                className="rounded-full bg-zinc-900 px-4 py-2 text-sm text-white hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-300"
               >
-                Save Playlist
+                {isSavingPlaylist ? "Saving..." : "Save Playlist"}
               </button>
             </div>
+
+            {isSavingPlaylist ? (
+              <p className="text-sm text-zinc-600">
+                Saving playlist ({tracks.length} tracks)... this may take a few seconds.
+              </p>
+            ) : null}
+
+            {saveErrorMessage ? (
+              <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                {saveErrorMessage}
+              </p>
+            ) : null}
           </div>
         </div>
       ) : null}
