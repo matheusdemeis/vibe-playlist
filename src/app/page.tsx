@@ -12,12 +12,15 @@ type ErrorResponse = {
   error?: string;
 };
 
+type GenerateStatus = "idle" | "loading" | "success" | "error";
+
 export default function Home() {
   const [isConnected, setIsConnected] = useState<boolean | null>(null);
   const [artistName, setArtistName] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [playlist, setPlaylist] = useState<GenerateResponse | null>(null);
+  const [status, setStatus] = useState<GenerateStatus>("idle");
 
   useEffect(() => {
     const checkConnection = async () => {
@@ -43,6 +46,7 @@ export default function Home() {
     }
 
     setIsGenerating(true);
+    setStatus("loading");
     setMessage(null);
     setPlaylist(null);
 
@@ -59,13 +63,16 @@ export default function Home() {
       if (!response.ok) {
         const errorMessage = "error" in data ? data.error : undefined;
         setMessage(errorMessage ?? "Could not generate playlist.");
+        setStatus("error");
         return;
       }
 
       setPlaylist(data as GenerateResponse);
       setMessage("Playlist created successfully.");
+      setStatus("success");
     } catch {
       setMessage("Unexpected error while generating playlist. Please try again.");
+      setStatus("error");
     } finally {
       setIsGenerating(false);
     }
@@ -102,6 +109,12 @@ export default function Home() {
           </button>
         </div>
         {message ? <p className="text-sm text-zinc-700">{message}</p> : null}
+        {status === "success" && playlist ? (
+          <div className="w-full rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-left text-sm text-emerald-800">
+            <p className="font-medium">Playlist generated successfully.</p>
+            <p>{playlist.trackCount} tracks were added to your Spotify playlist.</p>
+          </div>
+        ) : null}
         {playlist ? (
           <p className="text-sm text-zinc-700">
             Playlist ready ({playlist.trackCount} tracks):{" "}
