@@ -44,7 +44,8 @@ async function spotifyRequest<T>(
   });
 
   if (!response.ok) {
-    throw new Error(`Spotify API request failed (${response.status})`);
+    const errorText = await response.text();
+    throw new Error(`Spotify API request failed (${response.status}): ${errorText}`);
   }
 
   return (await response.json()) as T;
@@ -126,9 +127,12 @@ export async function POST(request: NextRequest) {
       playlistId: createdPlaylist.id,
       trackCount: trackUris.length,
     });
-  } catch {
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Could not generate playlist right now. Please try again.";
+    console.error("Playlist generation failed", message);
     return NextResponse.json(
-      { error: "Could not generate playlist right now. Please try again." },
+      { error: message },
       { status: 502 },
     );
   }

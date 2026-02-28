@@ -8,6 +8,7 @@ const DEFAULT_REDIRECT_URI = "http://127.0.0.1:5000/api/auth/callback";
 const SPOTIFY_SCOPES = [
   "playlist-modify-private",
   "playlist-modify-public",
+  "user-read-private",
 ].join(" ");
 
 export async function GET() {
