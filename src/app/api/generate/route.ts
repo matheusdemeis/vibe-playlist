@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { formatSpotifyApiErrorMessage } from "@/lib/spotify/error";
+import { formatSpotifyApiErrorMessage } from "../../../lib/spotify/error";
 
 const ACCESS_TOKEN_COOKIE_NAME = "spotify_access_token";
 const SPOTIFY_API_BASE_URL = "https://api.spotify.com/v1";
@@ -140,7 +140,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-async function addTracksInBatches(
+export async function addTracksInBatches(
   playlistId: string,
   trackUris: string[],
   accessToken: string,
