@@ -84,6 +84,18 @@ export type GeneratePlaylistTracksInput = VibeRecommendationInput & {
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
+export class PlaylistGenerationError extends Error {
+  status: number;
+  code: string;
+
+  constructor(message: string, status = 500, code = "generation_failed") {
+    super(message);
+    this.name = "PlaylistGenerationError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
 export function mapVibeToRecommendationParams(
   input: VibeRecommendationInput,
 ): SpotifyRecommendationParams {
@@ -168,6 +180,14 @@ export async function generatePlaylistTracks(
   fetcher: FetchLike = fetch,
 ): Promise<PlaylistGenerationResponse> {
   const params = mapVibeToRecommendationParams(input);
+  if (params.seed_genres.length === 0 && (!params.seed_tracks || params.seed_tracks.length === 0)) {
+    throw new PlaylistGenerationError(
+      "At least one seed genre or seed track is required.",
+      400,
+      "missing_seeds",
+    );
+  }
+
   const recommendationTracks = await fetchRecommendations(accessToken, params, fetcher);
 
   const dedupedTracks = dedupeTracksById(recommendationTracks);
@@ -224,7 +244,11 @@ async function fetchRecommendations(
   });
 
   if (!response.ok) {
-    throw new Error(`Spotify recommendations request failed (${response.status})`);
+    throw new PlaylistGenerationError(
+      "Spotify recommendations request failed.",
+      response.status === 401 ? 401 : 502,
+      "spotify_recommendations_failed",
+    );
   }
 
   const data = (await response.json()) as SpotifyRecommendationsResponse;
