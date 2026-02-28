@@ -315,6 +315,12 @@ export default function VibePage() {
         >
           Generate
         </a>
+        <a
+          href="/vibe/history"
+          className="inline-flex w-full items-center justify-center rounded-full border border-zinc-300 px-5 py-3 text-sm font-medium text-zinc-700 hover:bg-zinc-100 sm:w-auto"
+        >
+          View History
+        </a>
       </section>
     </main>
   );

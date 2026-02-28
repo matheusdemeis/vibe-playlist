@@ -11,6 +11,7 @@ import {
   type VibeBuilderInput,
 } from "@/lib/vibe-builder";
 import type { PlaylistGenerationResponse } from "@/lib/playlist/generate";
+import { addHistoryItem, attachPlaylistToHistory } from "@/lib/storage/vibe-data";
 
 type GenerateVibeApiError = {
   error: string;
@@ -67,6 +68,7 @@ export default function VibeResultsPage() {
   const [isSavingPlaylist, setIsSavingPlaylist] = useState(false);
   const [saveErrorMessage, setSaveErrorMessage] = useState<string | null>(null);
   const [saveResult, setSaveResult] = useState<SavePlaylistApiSuccess | null>(null);
+  const [latestHistoryId, setLatestHistoryId] = useState<string | null>(null);
 
   const queryString = searchParams.toString();
   const requestParse = useMemo(() => {
@@ -74,9 +76,10 @@ export default function VibeResultsPage() {
 
     try {
       const request = buildVibeGeneratorRequest(input);
-      return { request, error: null as string | null };
+      return { input, request, error: null as string | null };
     } catch (error) {
       return {
+        input,
         request: null,
         error: error instanceof Error ? error.message : "Request validation failed.",
       };
@@ -134,22 +137,37 @@ export default function VibeResultsPage() {
       }
 
       const data = (await response.json()) as PlaylistGenerationResponse;
-      setTracks((currentTracks) =>
-        mergeLockedTracks(
+      setTracks((currentTracks) => {
+        const mergedTracks = mergeLockedTracks(
           data.tracks,
           lockedTrackIds,
           lockedTrackCache,
           requestParse.request.trackCount,
           currentTracks,
-        ),
-      );
+        );
+
+        const historyItem = addHistoryItem({
+          settings: requestParse.input,
+          topTracks: mergedTracks.slice(0, 5).map((track) => ({
+            id: track.id,
+            name: track.name,
+            artists: track.artists,
+            image: track.image,
+            uri: track.uri,
+          })),
+          playlist: null,
+        });
+        setLatestHistoryId(historyItem.id);
+
+        return mergedTracks;
+      });
     } catch {
       setTracks([]);
       setErrorMessage("Could not generate tracks right now.");
     } finally {
       setIsLoading(false);
     }
-  }, [lockedTrackCache, lockedTrackIds, requestParse.request]);
+  }, [lockedTrackCache, lockedTrackIds, requestParse.input, requestParse.request]);
 
   useEffect(() => {
     if (!requestParse.request) {
@@ -235,6 +253,12 @@ export default function VibeResultsPage() {
 
       const data = (await response.json()) as SavePlaylistApiSuccess;
       setSaveResult(data);
+      if (latestHistoryId) {
+        attachPlaylistToHistory(latestHistoryId, {
+          id: data.playlistId,
+          url: data.playlistUrl,
+        });
+      }
       setIsSaveModalOpen(false);
     } catch {
       setSaveErrorMessage("Could not save playlist right now.");
@@ -416,6 +440,12 @@ export default function VibeResultsPage() {
           className="inline-flex rounded-full bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-500"
         >
           Back to Builder
+        </Link>
+        <Link
+          href="/vibe/history"
+          className="ml-2 inline-flex rounded-full border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-100"
+        >
+          View History
         </Link>
       </div>
 
