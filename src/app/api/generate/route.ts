@@ -29,11 +29,17 @@ type SpotifyCreatePlaylistResponse = {
   };
 };
 
+type SpotifyRequestFailure = {
+  status: number;
+  message: string;
+  details: Record<string, unknown> | null;
+};
+
 async function spotifyRequest<T>(
   path: string,
   accessToken: string,
   init?: RequestInit,
-): Promise<T> {
+): Promise<{ ok: true; data: T } | { ok: false; error: SpotifyRequestFailure }> {
   const url = `${SPOTIFY_API_BASE_URL}${path}`;
   const method = init?.method ?? "GET";
   traceGenerate("spotify_request_start", {
@@ -46,14 +52,26 @@ async function spotifyRequest<T>(
     },
   });
 
-  const response = await fetch(url, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {}),
-    },
-  });
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      ...init,
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+        ...(init?.headers ?? {}),
+      },
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      error: {
+        status: 500,
+        message: "Failed to reach Spotify API.",
+        details: { reason: error instanceof Error ? error.message : "Unknown fetch error" },
+      },
+    };
+  }
 
   if (!response.ok) {
     const errorText = await response.text();
@@ -65,11 +83,18 @@ async function spotifyRequest<T>(
       body: errorText,
       message,
     });
-    throw new Error(message);
+    return {
+      ok: false,
+      error: {
+        status: response.status,
+        message,
+        details: { url, method },
+      },
+    };
   }
 
   traceGenerate("spotify_request_success", { url, method, status: response.status });
-  return (await response.json()) as T;
+  return { ok: true, data: (await response.json()) as T };
 }
 
 export async function POST(request: NextRequest) {
@@ -104,8 +129,11 @@ export async function POST(request: NextRequest) {
       `/search?${trackSearchParams.toString()}`,
       accessToken,
     );
+    if (!trackSearch.ok) {
+      return jsonError(trackSearch.error.status, trackSearch.error.message, trackSearch.error.details);
+    }
 
-    const trackUris = trackSearch.tracks.items.map((track) => track.uri);
+    const trackUris = trackSearch.data.tracks.items.map((track) => track.uri);
     if (trackUris.length === 0) {
       return NextResponse.json(
         { error: "No tracks were returned for this query." },
@@ -123,9 +151,12 @@ export async function POST(request: NextRequest) {
 
     resolvedUrls.push(`${SPOTIFY_API_BASE_URL}/me`);
     const me = await spotifyRequest<SpotifyMeResponse>("/me", accessToken);
-    resolvedUrls.push(`${SPOTIFY_API_BASE_URL}/users/${me.id}/playlists`);
+    if (!me.ok) {
+      return jsonError(me.error.status, me.error.message, me.error.details);
+    }
+    resolvedUrls.push(`${SPOTIFY_API_BASE_URL}/users/${me.data.id}/playlists`);
     const createdPlaylist = await spotifyRequest<SpotifyCreatePlaylistResponse>(
-      `/users/${me.id}/playlists`,
+      `/users/${me.data.id}/playlists`,
       accessToken,
       {
         method: "POST",
@@ -136,22 +167,29 @@ export async function POST(request: NextRequest) {
         }),
       },
     );
+    if (!createdPlaylist.ok) {
+      return jsonError(
+        createdPlaylist.error.status,
+        createdPlaylist.error.message,
+        createdPlaylist.error.details,
+      );
+    }
 
-    await addTracksInBatches(createdPlaylist.id, trackUris, accessToken);
+    const addTracksError = await addTracksInBatches(createdPlaylist.data.id, trackUris, accessToken);
+    if (addTracksError) {
+      return jsonError(addTracksError.status, addTracksError.message, addTracksError.details);
+    }
 
     return NextResponse.json({
-      playlistUrl: createdPlaylist.external_urls.spotify,
-      playlistId: createdPlaylist.id,
+      playlistUrl: createdPlaylist.data.external_urls.spotify,
+      playlistId: createdPlaylist.data.id,
       trackCount: trackUris.length,
     });
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Could not generate playlist right now. Please try again.";
     console.error("Playlist generation failed", message);
-    return NextResponse.json(
-      { error: message },
-      { status: 502 },
-    );
+    return jsonError(502, "Unexpected generate failure.", { message });
   }
 }
 
@@ -187,7 +225,7 @@ function parseGenerateRequest(body: GenerateRequestBody):
   };
 }
 
-function jsonError(status: number, message: string, details?: Record<string, unknown>) {
+function jsonError(status: number, message: string, details?: Record<string, unknown> | null) {
   return NextResponse.json(
     {
       error: {
@@ -204,10 +242,10 @@ export async function addTracksInBatches(
   playlistId: string,
   trackUris: string[],
   accessToken: string,
-): Promise<void> {
+): Promise<SpotifyRequestFailure | null> {
   for (let index = 0; index < trackUris.length; index += SPOTIFY_TRACKS_BATCH_SIZE) {
     const uris = trackUris.slice(index, index + SPOTIFY_TRACKS_BATCH_SIZE);
-    await spotifyRequest<{ snapshot_id: string }>(
+    const added = await spotifyRequest<{ snapshot_id: string }>(
       `/playlists/${playlistId}/tracks`,
       accessToken,
       {
@@ -215,7 +253,12 @@ export async function addTracksInBatches(
         body: JSON.stringify({ uris }),
       },
     );
+    if (!added.ok) {
+      return added.error;
+    }
   }
+
+  return null;
 }
 
 function traceGenerate(event: string, payload: Record<string, unknown>): void {
