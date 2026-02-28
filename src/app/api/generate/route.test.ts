@@ -71,10 +71,53 @@ describe("POST /api/generate", () => {
     expect(body.playlistId).toBe("playlist-1");
     expect(body.trackCount).toBe(2);
 
-    expect(fetchMock.mock.calls[0]?.[0]).toContain("/search?");
-    expect(fetchMock.mock.calls[1]?.[0]).toContain("/me");
-    expect(fetchMock.mock.calls[2]?.[0]).toContain("/users/user-1/playlists");
-    expect(fetchMock.mock.calls[3]?.[0]).toContain("/playlists/playlist-1/tracks");
+    expect(fetchMock.mock.calls[0]?.[0]).toContain("/v1/search?");
+    expect(fetchMock.mock.calls[1]?.[0]).toContain("/v1/me");
+    expect(fetchMock.mock.calls[2]?.[0]).toContain("/v1/users/user-1/playlists");
+    expect(fetchMock.mock.calls[3]?.[0]).toContain("/v1/playlists/playlist-1/tracks");
+
+    fetchMock.mockRestore();
+  });
+
+  it("supports dry run mode and skips playlist creation", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          tracks: {
+            items: [
+              { uri: "spotify:track:1" },
+              { uri: "spotify:track:2" },
+              { uri: "spotify:track:3" },
+            ],
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const request = new NextRequest("http://localhost:5000/api/generate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: "spotify_access_token=test-token",
+      },
+      body: JSON.stringify({ artistName: "Drake", dryRun: true }),
+    });
+
+    const response = await POST(request);
+    const body = (await response.json()) as {
+      dryRun: boolean;
+      resolvedUrls: string[];
+      trackCount: number;
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.dryRun).toBe(true);
+    expect(body.trackCount).toBe(3);
+    expect(body.resolvedUrls[0]).toContain("https://api.spotify.com/v1/search?");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toContain("/v1/search?");
 
     fetchMock.mockRestore();
   });

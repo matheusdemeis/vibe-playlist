@@ -8,6 +8,7 @@ const SPOTIFY_TRACKS_BATCH_SIZE = 100;
 
 type GenerateRequestBody = {
   artistName?: string;
+  dryRun?: boolean;
 };
 
 type SpotifyTrackSearchResponse = {
@@ -85,16 +86,20 @@ export async function POST(request: NextRequest) {
 
   const body = (await request.json()) as GenerateRequestBody;
   const artistName = body.artistName?.trim();
+  const dryRun = body.dryRun === true;
   if (!artistName) {
     return NextResponse.json({ error: "Artist name is required." }, { status: 400 });
   }
 
   try {
+    const resolvedUrls: string[] = [];
+
     const trackSearchParams = new URLSearchParams({
       q: artistName,
       type: "track",
       limit: `${DEFAULT_TRACK_SEARCH_LIMIT}`,
     });
+    resolvedUrls.push(`${SPOTIFY_API_BASE_URL}/search?${trackSearchParams.toString()}`);
     const trackSearch = await spotifyRequest<SpotifyTrackSearchResponse>(
       `/search?${trackSearchParams.toString()}`,
       accessToken,
@@ -108,7 +113,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (dryRun) {
+      return NextResponse.json({
+        dryRun: true,
+        resolvedUrls,
+        trackCount: trackUris.length,
+      });
+    }
+
+    resolvedUrls.push(`${SPOTIFY_API_BASE_URL}/me`);
     const me = await spotifyRequest<SpotifyMeResponse>("/me", accessToken);
+    resolvedUrls.push(`${SPOTIFY_API_BASE_URL}/users/${me.id}/playlists`);
     const createdPlaylist = await spotifyRequest<SpotifyCreatePlaylistResponse>(
       `/users/${me.id}/playlists`,
       accessToken,
