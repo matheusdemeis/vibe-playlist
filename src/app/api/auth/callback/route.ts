@@ -1,9 +1,12 @@
 import { Buffer } from "node:buffer";
+import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
 const SPOTIFY_TOKEN_URL = "https://accounts.spotify.com/api/token";
-const STATE_COOKIE_NAME = "spotify_oauth_state";
+const STATE_COOKIE_NAME = "spotify_auth_state";
 const ACCESS_TOKEN_COOKIE_NAME = "spotify_access_token";
+const DEFAULT_REDIRECT_URI = "http://127.0.0.1:5000/api/auth/callback";
+const DEFAULT_APP_URL = "http://127.0.0.1:5000";
 
 type SpotifyTokenResponse = {
   access_token: string;
@@ -14,17 +17,26 @@ type SpotifyTokenResponse = {
 export async function GET(request: NextRequest) {
   const code = request.nextUrl.searchParams.get("code");
   const state = request.nextUrl.searchParams.get("state");
-  const storedState = request.cookies.get(STATE_COOKIE_NAME)?.value;
+  const cookieStore = await cookies();
+  const storedState = cookieStore.get(STATE_COOKIE_NAME)?.value;
 
   if (!code || !state || !storedState || state !== storedState) {
+    console.log("Spotify OAuth state mismatch", {
+      hasCode: Boolean(code),
+      hasState: Boolean(state),
+      hasStoredState: Boolean(storedState),
+    });
     return NextResponse.json({ error: "Invalid OAuth state." }, { status: 400 });
   }
 
+  cookieStore.delete(STATE_COOKIE_NAME);
+
   const clientId = process.env.SPOTIFY_CLIENT_ID;
   const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
-  const redirectUri = process.env.SPOTIFY_REDIRECT_URI;
+  const redirectUri = process.env.SPOTIFY_REDIRECT_URI ?? DEFAULT_REDIRECT_URI;
+  const appUrl = process.env.APP_URL ?? DEFAULT_APP_URL;
 
-  if (!clientId || !clientSecret || !redirectUri) {
+  if (!clientId || !clientSecret) {
     return NextResponse.json(
       { error: "Missing Spotify OAuth environment variables." },
       { status: 500 },
@@ -52,7 +64,7 @@ export async function GET(request: NextRequest) {
   }
 
   const data = (await tokenResponse.json()) as SpotifyTokenResponse;
-  const response = NextResponse.redirect(new URL("/", request.url));
+  const response = NextResponse.redirect(appUrl);
 
   response.cookies.set(ACCESS_TOKEN_COOKIE_NAME, data.access_token, {
     httpOnly: true,
@@ -60,13 +72,6 @@ export async function GET(request: NextRequest) {
     sameSite: "lax",
     path: "/",
     maxAge: data.expires_in,
-  });
-  response.cookies.set(STATE_COOKIE_NAME, "", {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/",
-    maxAge: 0,
   });
 
   return response;

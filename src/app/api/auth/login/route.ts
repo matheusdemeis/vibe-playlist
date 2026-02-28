@@ -1,7 +1,10 @@
-import { randomBytes } from "node:crypto";
+import { randomUUID } from "node:crypto";
+import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
 const SPOTIFY_AUTHORIZE_URL = "https://accounts.spotify.com/authorize";
+const STATE_COOKIE_NAME = "spotify_auth_state";
+const DEFAULT_REDIRECT_URI = "http://127.0.0.1:5000/api/auth/callback";
 const SPOTIFY_SCOPES = [
   "playlist-modify-private",
   "playlist-modify-public",
@@ -9,16 +12,20 @@ const SPOTIFY_SCOPES = [
 
 export async function GET() {
   const clientId = process.env.SPOTIFY_CLIENT_ID;
-  const redirectUri = process.env.SPOTIFY_REDIRECT_URI;
+  const redirectUri = process.env.SPOTIFY_REDIRECT_URI ?? DEFAULT_REDIRECT_URI;
 
-  if (!clientId || !redirectUri) {
-    return NextResponse.json(
-      { error: "Missing SPOTIFY_CLIENT_ID or SPOTIFY_REDIRECT_URI." },
-      { status: 500 },
-    );
+  if (!clientId) {
+    return NextResponse.json({ error: "Missing SPOTIFY_CLIENT_ID." }, { status: 500 });
   }
 
-  const state = randomBytes(16).toString("hex");
+  const state = randomUUID();
+  const cookieStore = await cookies();
+  cookieStore.set(STATE_COOKIE_NAME, state, {
+    httpOnly: true,
+    sameSite: "lax",
+    path: "/",
+  });
+
   const params = new URLSearchParams({
     client_id: clientId,
     response_type: "code",
@@ -27,14 +34,5 @@ export async function GET() {
     state,
   });
 
-  const response = NextResponse.redirect(`${SPOTIFY_AUTHORIZE_URL}?${params.toString()}`);
-  response.cookies.set("spotify_oauth_state", state, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/",
-    maxAge: 60 * 10,
-  });
-
-  return response;
+  return NextResponse.redirect(`${SPOTIFY_AUTHORIZE_URL}?${params.toString()}`);
 }
