@@ -1,48 +1,19 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import {
+  CURATED_GENRES,
+  DEFAULT_VIBE_INPUT,
+  TEMPO_OPTIONS,
+  TRACK_COUNT_OPTIONS,
+  VIBE_PRESETS,
+  type TempoOption,
+  type VibeBuilderInput,
+} from "@/lib/vibe-builder";
 
-const VIBE_PRESETS = ["Chill", "Gym", "Focus", "Party", "Sad", "Happy"] as const;
-const TEMPO_OPTIONS = ["Slow", "Medium", "Fast"] as const;
-const TRACK_COUNT_OPTIONS = [20, 30, 50] as const;
-const CURATED_GENRES = [
-  "pop",
-  "rock",
-  "hip-hop",
-  "electronic",
-  "indie",
-  "jazz",
-  "classical",
-  "r-n-b",
-  "latin",
-  "ambient",
-] as const;
-
-type TempoOption = (typeof TEMPO_OPTIONS)[number];
-
-type VibeFormState = {
-  vibes: string[];
-  energy: number;
-  valence: number;
-  tempo: TempoOption;
-  genres: string[];
-  trackCount: number;
-  explicit: boolean;
-};
-
-const DEFAULT_STATE: VibeFormState = {
-  vibes: [],
-  energy: 50,
-  valence: 50,
-  tempo: "Medium",
-  genres: [],
-  trackCount: 20,
-  explicit: true,
-};
-
-function readStateFromQuery(): VibeFormState {
+function readStateFromQuery(): VibeBuilderInput {
   if (typeof window === "undefined") {
-    return DEFAULT_STATE;
+    return DEFAULT_VIBE_INPUT;
   }
 
   const params = new URLSearchParams(window.location.search);
@@ -57,18 +28,21 @@ function readStateFromQuery(): VibeFormState {
   return {
     vibes,
     genres,
-    energy: Number.isFinite(energy) ? energy : DEFAULT_STATE.energy,
-    valence: Number.isFinite(valence) ? valence : DEFAULT_STATE.valence,
-    tempo: TEMPO_OPTIONS.includes(tempo as TempoOption) ? (tempo as TempoOption) : DEFAULT_STATE.tempo,
+    energy: Number.isFinite(energy) ? energy : DEFAULT_VIBE_INPUT.energy,
+    valence: Number.isFinite(valence) ? valence : DEFAULT_VIBE_INPUT.valence,
+    tempo:
+      TEMPO_OPTIONS.includes(tempo as TempoOption)
+        ? (tempo as TempoOption)
+        : DEFAULT_VIBE_INPUT.tempo,
     trackCount: TRACK_COUNT_OPTIONS.includes(trackCount as 20 | 30 | 50)
       ? (trackCount as 20 | 30 | 50)
-      : DEFAULT_STATE.trackCount,
-    explicit: explicit === null ? DEFAULT_STATE.explicit : explicit === "true",
+      : DEFAULT_VIBE_INPUT.trackCount,
+    explicit: explicit === null ? DEFAULT_VIBE_INPUT.explicit : explicit === "true",
   };
 }
 
 export default function VibePage() {
-  const [state, setState] = useState<VibeFormState>(() => readStateFromQuery());
+  const [state, setState] = useState<VibeBuilderInput>(() => readStateFromQuery());
 
   useEffect(() => {
     const params = new URLSearchParams();
