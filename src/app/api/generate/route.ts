@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { formatSpotifyApiErrorMessage } from "@/lib/spotify/error";
 
 const ACCESS_TOKEN_COOKIE_NAME = "spotify_access_token";
 const SPOTIFY_API_BASE_URL = "https://api.spotify.com/v1";
@@ -55,13 +56,15 @@ async function spotifyRequest<T>(
 
   if (!response.ok) {
     const errorText = await response.text();
+    const message = formatSpotifyApiErrorMessage(response.status, errorText, response.headers);
     traceGenerate("spotify_request_error", {
       url,
       method,
       status: response.status,
       body: errorText,
+      message,
     });
-    throw new Error(`Spotify API request failed (${response.status}) @ ${url}: ${errorText}`);
+    throw new Error(message);
   }
 
   traceGenerate("spotify_request_success", { url, method, status: response.status });

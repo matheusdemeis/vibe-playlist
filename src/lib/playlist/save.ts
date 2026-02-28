@@ -1,3 +1,5 @@
+import { formatSpotifyApiErrorMessage } from "../spotify/error";
+
 const SPOTIFY_API_BASE_URL = "https://api.spotify.com/v1";
 export const SPOTIFY_TRACKS_BATCH_SIZE = 100;
 
@@ -117,7 +119,7 @@ async function spotifyRequest<T>(
   if (!response.ok) {
     const errorText = await response.text();
     throw new PlaylistSaveError(
-      `Spotify save request failed (${response.status}): ${errorText}`,
+      formatSpotifyApiErrorMessage(response.status, errorText, response.headers),
       response.status === 401 ? 401 : 502,
       "spotify_save_failed",
     );

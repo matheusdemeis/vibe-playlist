@@ -1,4 +1,5 @@
 import type { TempoOption } from "@/lib/vibe-builder";
+import { formatSpotifyApiErrorMessage } from "../spotify/error";
 
 const TEMPO_TARGETS: Record<TempoOption, number> = {
   Slow: 80,
@@ -246,8 +247,9 @@ async function fetchRecommendations(
   });
 
   if (!response.ok) {
+    const errorText = await response.text();
     throw new PlaylistGenerationError(
-      "Spotify recommendations request failed.",
+      formatSpotifyApiErrorMessage(response.status, errorText, response.headers),
       response.status === 401 ? 401 : 502,
       "spotify_recommendations_failed",
     );
