@@ -35,6 +35,7 @@ export type SpotifyRecommendationTrack = SpotifyTrack & {
   name: string;
   uri: string;
   preview_url: string | null;
+  explicit: boolean;
   album: {
     name: string;
     images: Array<{ url: string }>;
@@ -63,6 +64,7 @@ export type RankedTrack = {
   image: string | null;
   uri: string;
   preview_url: string | null;
+  explicit: boolean;
 };
 
 export type PlaylistGenerationResponse = {
@@ -346,6 +348,7 @@ function formatRankedTrack(track: SpotifyRecommendationTrack): RankedTrack {
     image: track.album.images[0]?.url ?? null,
     uri: track.uri,
     preview_url: track.preview_url,
+    explicit: track.explicit,
   };
 }
 
