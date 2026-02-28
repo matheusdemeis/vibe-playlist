@@ -43,6 +43,10 @@ function readRequestInput(params: URLSearchParams): VibeBuilderInput {
 export default function VibeResultsPage() {
   const searchParams = useSearchParams();
   const [tracks, setTracks] = useState<PlaylistGenerationResponse["tracks"]>([]);
+  const [lockedTrackIds, setLockedTrackIds] = useState<string[]>([]);
+  const [lockedTrackCache, setLockedTrackCache] = useState<
+    Record<string, PlaylistGenerationResponse["tracks"][number]>
+  >({});
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -81,6 +85,7 @@ export default function VibeResultsPage() {
           targetValence: requestParse.request.targetValence,
           tempo: requestParse.request.tempo,
           trackCount: requestParse.request.trackCount,
+          referenceTrackIds: lockedTrackIds,
         }),
       });
 
@@ -91,14 +96,22 @@ export default function VibeResultsPage() {
       }
 
       const data = (await response.json()) as PlaylistGenerationResponse;
-      setTracks(data.tracks);
+      setTracks((currentTracks) =>
+        mergeLockedTracks(
+          data.tracks,
+          lockedTrackIds,
+          lockedTrackCache,
+          requestParse.request.trackCount,
+          currentTracks,
+        ),
+      );
     } catch {
       setTracks([]);
       setErrorMessage("Could not generate tracks right now.");
     } finally {
       setIsLoading(false);
     }
-  }, [requestParse.request]);
+  }, [lockedTrackCache, lockedTrackIds, requestParse.request]);
 
   useEffect(() => {
     if (!requestParse.request) {
@@ -122,7 +135,33 @@ export default function VibeResultsPage() {
 
   const handleRemoveTrack = (trackId: string) => {
     setTracks((previous) => previous.filter((track) => track.id !== trackId));
+    setLockedTrackIds((previous) => previous.filter((id) => id !== trackId));
   };
+
+  const handleToggleLock = (trackId: string) => {
+    setLockedTrackIds((previous) => {
+      if (previous.includes(trackId)) {
+        return previous.filter((id) => id !== trackId);
+      }
+      return [...previous, trackId];
+    });
+  };
+
+  useEffect(() => {
+    if (tracks.length === 0) {
+      return;
+    }
+
+    setLockedTrackCache((previous) => {
+      const next = { ...previous };
+      for (const track of tracks) {
+        if (lockedTrackIds.includes(track.id)) {
+          next[track.id] = track;
+        }
+      }
+      return next;
+    });
+  }, [lockedTrackIds, tracks]);
 
   return (
     <main className="rounded-2xl bg-white p-5 shadow-sm sm:p-8">
@@ -172,13 +211,22 @@ export default function VibeResultsPage() {
             <p className="text-sm text-zinc-700">
               Generated {tracks.length} tracks.
             </p>
-            <button
-              type="button"
-              onClick={handleShuffle}
-              className="rounded-full border border-zinc-300 px-4 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-100"
-            >
-              Shuffle Order
-            </button>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => void fetchResults()}
+                className="rounded-full border border-zinc-300 px-4 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-100"
+              >
+                Regenerate
+              </button>
+              <button
+                type="button"
+                onClick={handleShuffle}
+                className="rounded-full border border-zinc-300 px-4 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-100"
+              >
+                Shuffle Order
+              </button>
+            </div>
           </div>
 
           <ul className="space-y-2">
@@ -215,6 +263,17 @@ export default function VibeResultsPage() {
                 </div>
                 <button
                   type="button"
+                  onClick={() => handleToggleLock(track.id)}
+                  className={`rounded-full border px-3 py-1.5 text-xs ${
+                    lockedTrackIds.includes(track.id)
+                      ? "border-zinc-900 bg-zinc-900 text-white"
+                      : "border-zinc-300 text-zinc-700 hover:bg-zinc-100"
+                  }`}
+                >
+                  {lockedTrackIds.includes(track.id) ? "Locked" : "Lock"}
+                </button>
+                <button
+                  type="button"
                   onClick={() => handleRemoveTrack(track.id)}
                   className="rounded-full border border-zinc-300 px-3 py-1.5 text-xs text-zinc-700 hover:bg-zinc-100"
                 >
@@ -236,4 +295,48 @@ export default function VibeResultsPage() {
       </div>
     </main>
   );
+}
+
+function mergeLockedTracks(
+  incomingTracks: PlaylistGenerationResponse["tracks"],
+  lockedTrackIds: string[],
+  lockedTrackCache: Record<string, PlaylistGenerationResponse["tracks"][number]>,
+  trackCount: number,
+  currentTracks: PlaylistGenerationResponse["tracks"],
+): PlaylistGenerationResponse["tracks"] {
+  if (lockedTrackIds.length === 0) {
+    return incomingTracks;
+  }
+
+  const latestTrackMap: Record<string, PlaylistGenerationResponse["tracks"][number]> = {
+    ...lockedTrackCache,
+  };
+  for (const track of currentTracks) {
+    latestTrackMap[track.id] = track;
+  }
+  for (const track of incomingTracks) {
+    latestTrackMap[track.id] = track;
+  }
+
+  const merged: PlaylistGenerationResponse["tracks"] = [];
+  const seen = new Set<string>();
+
+  for (const id of lockedTrackIds) {
+    const lockedTrack = latestTrackMap[id];
+    if (!lockedTrack || seen.has(lockedTrack.id)) {
+      continue;
+    }
+    seen.add(lockedTrack.id);
+    merged.push(lockedTrack);
+  }
+
+  for (const track of incomingTracks) {
+    if (seen.has(track.id)) {
+      continue;
+    }
+    seen.add(track.id);
+    merged.push(track);
+  }
+
+  return merged.slice(0, trackCount);
 }
