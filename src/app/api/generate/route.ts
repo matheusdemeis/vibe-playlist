@@ -18,10 +18,6 @@ type SpotifyRecommendationsResponse = {
   tracks: Array<{ uri: string }>;
 };
 
-type SpotifyMeResponse = {
-  id: string;
-};
-
 type SpotifyCreatePlaylistResponse = {
   id: string;
   external_urls: {
@@ -99,9 +95,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const me = await spotifyRequest<SpotifyMeResponse>("/me", accessToken);
     const createdPlaylist = await spotifyRequest<SpotifyCreatePlaylistResponse>(
-      `/users/${me.id}/playlists`,
+      "/me/playlists",
       accessToken,
       {
         method: "POST",
