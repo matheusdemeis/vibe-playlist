@@ -92,16 +92,17 @@ export default function VibePage() {
         </p>
       </header>
 
-      <section className="space-y-6">
-        <div className="space-y-3">
-          <h2 className="text-sm font-medium text-zinc-900">Vibe / Mood</h2>
-          <div className="flex flex-wrap gap-2">
+      <section className="space-y-7">
+        <fieldset className="space-y-3">
+          <legend className="text-sm font-medium text-zinc-900">Vibe / Mood Presets</legend>
+          <div className="flex flex-wrap gap-2" role="group" aria-label="Vibe mood presets">
             {VIBE_PRESETS.map((vibe) => {
               const active = state.vibes.includes(vibe);
               return (
                 <button
                   key={vibe}
                   type="button"
+                  aria-pressed={active}
                   onClick={() =>
                     setState((prev) => ({ ...prev, vibes: toggleSelection(prev.vibes, vibe) }))
                   }
@@ -114,13 +115,14 @@ export default function VibePage() {
               );
             })}
           </div>
-        </div>
+        </fieldset>
 
-        <div className="space-y-2">
-          <label className="block text-sm font-medium text-zinc-900">
+        <div className="space-y-2.5">
+          <label htmlFor="energy-slider" className="block text-sm font-medium text-zinc-900">
             Energy: <span className="font-semibold">{state.energy}</span>
           </label>
           <input
+            id="energy-slider"
             type="range"
             min={0}
             max={100}
@@ -132,11 +134,12 @@ export default function VibePage() {
           />
         </div>
 
-        <div className="space-y-2">
-          <label className="block text-sm font-medium text-zinc-900">
+        <div className="space-y-2.5">
+          <label htmlFor="valence-slider" className="block text-sm font-medium text-zinc-900">
             Valence: <span className="font-semibold">{state.valence}</span>
           </label>
           <input
+            id="valence-slider"
             type="range"
             min={0}
             max={100}
@@ -148,9 +151,12 @@ export default function VibePage() {
           />
         </div>
 
-        <div className="space-y-2">
-          <label className="block text-sm font-medium text-zinc-900">Tempo</label>
+        <div className="space-y-2.5">
+          <label htmlFor="tempo-select" className="block text-sm font-medium text-zinc-900">
+            Tempo
+          </label>
           <select
+            id="tempo-select"
             value={state.tempo}
             onChange={(event) =>
               setState((prev) => ({ ...prev, tempo: event.target.value as TempoOption }))
@@ -165,15 +171,16 @@ export default function VibePage() {
           </select>
         </div>
 
-        <div className="space-y-3">
-          <h2 className="text-sm font-medium text-zinc-900">Genres</h2>
-          <div className="flex flex-wrap gap-2">
+        <fieldset className="space-y-3">
+          <legend className="text-sm font-medium text-zinc-900">Genres</legend>
+          <div className="flex flex-wrap gap-2" role="group" aria-label="Music genres">
             {CURATED_GENRES.map((genre) => {
               const active = state.genres.includes(genre);
               return (
                 <button
                   key={genre}
                   type="button"
+                  aria-pressed={active}
                   onClick={() =>
                     setState((prev) => ({ ...prev, genres: toggleSelection(prev.genres, genre) }))
                   }
@@ -186,11 +193,14 @@ export default function VibePage() {
               );
             })}
           </div>
-        </div>
+        </fieldset>
 
-        <div className="space-y-2">
-          <label className="block text-sm font-medium text-zinc-900">Track Count</label>
+        <div className="space-y-2.5">
+          <label htmlFor="track-count" className="block text-sm font-medium text-zinc-900">
+            Track Count
+          </label>
           <select
+            id="track-count"
             value={state.trackCount}
             onChange={(event) =>
               setState((prev) => ({ ...prev, trackCount: Number(event.target.value) }))
@@ -205,8 +215,9 @@ export default function VibePage() {
           </select>
         </div>
 
-        <label className="flex items-center gap-2 text-sm text-zinc-900">
+        <label htmlFor="explicit-toggle" className="flex items-center gap-2 text-sm text-zinc-900">
           <input
+            id="explicit-toggle"
             type="checkbox"
             checked={state.explicit}
             onChange={(event) => setState((prev) => ({ ...prev, explicit: event.target.checked }))}
@@ -216,7 +227,7 @@ export default function VibePage() {
 
         <a
           href={`/vibe/results?${resultQuery}`}
-          className="inline-flex w-full items-center justify-center rounded-full bg-zinc-900 px-5 py-3 text-sm font-medium text-white hover:bg-zinc-700 sm:w-auto"
+          className="inline-flex w-full items-center justify-center rounded-full bg-zinc-900 px-5 py-3 text-sm font-medium text-white hover:bg-zinc-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-500 sm:w-auto"
         >
           Generate
         </a>

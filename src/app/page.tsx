@@ -57,7 +57,8 @@ export default function Home() {
       const data = (await response.json()) as GenerateResponse | ErrorResponse;
 
       if (!response.ok) {
-        setMessage(data.error ?? "Could not generate playlist.");
+        const errorMessage = "error" in data ? data.error : undefined;
+        setMessage(errorMessage ?? "Could not generate playlist.");
         return;
       }
 
