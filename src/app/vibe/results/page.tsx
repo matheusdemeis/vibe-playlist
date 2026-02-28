@@ -49,6 +49,10 @@ export default function VibeResultsPage() {
   >({});
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
+  const [playlistName, setPlaylistName] = useState("");
+  const [playlistDescription, setPlaylistDescription] = useState("");
+  const [isPublicPlaylist, setIsPublicPlaylist] = useState(false);
 
   const queryString = searchParams.toString();
   const requestParse = useMemo(() => {
@@ -64,6 +68,26 @@ export default function VibeResultsPage() {
       };
     }
   }, [searchParams]);
+
+  const defaultPlaylistName = useMemo(() => {
+    if (!requestParse.request) {
+      return "";
+    }
+
+    return buildDefaultPlaylistName(requestParse.request.vibes, requestParse.request.targetEnergy);
+  }, [requestParse.request]);
+
+  const defaultPlaylistDescription = useMemo(() => {
+    if (!requestParse.request) {
+      return "";
+    }
+
+    const vibeText =
+      requestParse.request.vibes.length > 0
+        ? requestParse.request.vibes.join(", ")
+        : "custom vibe settings";
+    return `Generated with Vibe Builder from ${vibeText}.`;
+  }, [requestParse.request]);
 
   const fetchResults = useCallback(async () => {
     if (!requestParse.request) {
@@ -121,6 +145,18 @@ export default function VibeResultsPage() {
 
     void fetchResults();
   }, [fetchResults, requestParse.request]);
+
+  useEffect(() => {
+    if (!requestParse.request) {
+      setPlaylistName("");
+      setPlaylistDescription("");
+      return;
+    }
+
+    setPlaylistName(defaultPlaylistName);
+    setPlaylistDescription(defaultPlaylistDescription);
+    setIsPublicPlaylist(false);
+  }, [defaultPlaylistDescription, defaultPlaylistName, requestParse.request]);
 
   const handleShuffle = () => {
     setTracks((previous) => {
@@ -230,6 +266,13 @@ export default function VibeResultsPage() {
               >
                 Shuffle Order
               </button>
+              <button
+                type="button"
+                onClick={() => setIsSaveModalOpen(true)}
+                className="rounded-full bg-zinc-900 px-4 py-2 text-xs font-medium text-white hover:bg-zinc-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-500"
+              >
+                Save to Spotify
+              </button>
             </div>
           </div>
 
@@ -298,6 +341,75 @@ export default function VibeResultsPage() {
           Back to Builder
         </Link>
       </div>
+
+      {isSaveModalOpen ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Save playlist to Spotify"
+          className="fixed inset-0 z-30 flex items-end justify-center bg-black/30 p-4 sm:items-center"
+        >
+          <div className="w-full max-w-lg space-y-4 rounded-2xl bg-white p-5 shadow-xl sm:p-6">
+            <div className="space-y-1">
+              <h2 className="text-lg font-semibold text-zinc-900">Save to Spotify</h2>
+              <p className="text-sm text-zinc-600">
+                Edit details before creating the playlist in your account.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <label htmlFor="playlist-name" className="text-sm font-medium text-zinc-900">
+                Playlist name
+              </label>
+              <input
+                id="playlist-name"
+                value={playlistName}
+                onChange={(event) => setPlaylistName(event.target.value)}
+                className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm text-zinc-900"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label htmlFor="playlist-description" className="text-sm font-medium text-zinc-900">
+                Description
+              </label>
+              <textarea
+                id="playlist-description"
+                value={playlistDescription}
+                onChange={(event) => setPlaylistDescription(event.target.value)}
+                rows={3}
+                className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm text-zinc-900"
+              />
+            </div>
+
+            <label className="flex items-center gap-2 text-sm text-zinc-900">
+              <input
+                type="checkbox"
+                checked={isPublicPlaylist}
+                onChange={(event) => setIsPublicPlaylist(event.target.checked)}
+              />
+              Make playlist public
+            </label>
+
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setIsSaveModalOpen(false)}
+                className="rounded-full border border-zinc-300 px-4 py-2 text-sm text-zinc-700 hover:bg-zinc-100"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled
+                className="rounded-full bg-zinc-300 px-4 py-2 text-sm text-white"
+              >
+                Save Playlist
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }
@@ -344,4 +456,25 @@ function mergeLockedTracks(
   }
 
   return merged.slice(0, trackCount);
+}
+
+function buildDefaultPlaylistName(vibes: string[], targetEnergy: number): string {
+  const primaryVibe = vibes[0] ?? "Vibe";
+  const energyLabel = getEnergyLabel(targetEnergy);
+  const dateLabel = new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+  }).format(new Date());
+
+  return `${primaryVibe} • ${energyLabel} • ${dateLabel}`;
+}
+
+function getEnergyLabel(targetEnergy: number): string {
+  if (targetEnergy >= 67) {
+    return "High Energy";
+  }
+  if (targetEnergy >= 34) {
+    return "Medium Energy";
+  }
+  return "Low Energy";
 }
