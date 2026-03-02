@@ -27,6 +27,13 @@ type SavePlaylistApiSuccess = {
   playlistId: string;
   playlistUrl: string;
   snapshotId: string | null;
+  tracksAddedCount: number;
+  tracksAdded: boolean;
+  warning?: string;
+  visibility: {
+    requested: boolean;
+    final: boolean | null;
+  };
 };
 
 function readRequestInput(params: URLSearchParams): VibeBuilderInput {
@@ -66,6 +73,7 @@ export default function VibeResultsPage() {
   const [playlistDescription, setPlaylistDescription] = useState("");
   const [isPublicPlaylist, setIsPublicPlaylist] = useState(false);
   const [isSavingPlaylist, setIsSavingPlaylist] = useState(false);
+  const [isRetryingAddTracks, setIsRetryingAddTracks] = useState(false);
   const [saveErrorMessage, setSaveErrorMessage] = useState<string | null>(null);
   const [saveResult, setSaveResult] = useState<SavePlaylistApiSuccess | null>(null);
   const [latestHistoryId, setLatestHistoryId] = useState<string | null>(null);
@@ -253,6 +261,9 @@ export default function VibeResultsPage() {
 
       const data = (await response.json()) as SavePlaylistApiSuccess;
       setSaveResult(data);
+      if (data.tracksAdded === false) {
+        setSaveErrorMessage("Playlist created, but tracks failed to add.");
+      }
       if (latestHistoryId) {
         attachPlaylistToHistory(latestHistoryId, {
           id: data.playlistId,
@@ -264,6 +275,51 @@ export default function VibeResultsPage() {
       setSaveErrorMessage("Could not save playlist right now.");
     } finally {
       setIsSavingPlaylist(false);
+    }
+  };
+
+  const handleRetryAddTracks = async () => {
+    if (!saveResult) {
+      return;
+    }
+
+    setIsRetryingAddTracks(true);
+    setSaveErrorMessage(null);
+    try {
+      const response = await fetch(`/api/playlists/${saveResult.playlistId}/add-tracks`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          trackUris: tracks.map((track) => track.uri),
+        }),
+      });
+
+      const data = (await response.json()) as
+        | { tracksAddedCount: number; error?: string }
+        | SavePlaylistApiError;
+      if (!response.ok) {
+        setSaveErrorMessage(
+          ("error" in data ? data.error : undefined) ?? "Could not add tracks right now.",
+        );
+        return;
+      }
+
+      setSaveResult((previous) =>
+        previous
+          ? {
+              ...previous,
+              tracksAdded: true,
+              tracksAddedCount:
+                "tracksAddedCount" in data ? data.tracksAddedCount : previous.tracksAddedCount,
+            }
+          : previous,
+      );
+    } catch {
+      setSaveErrorMessage("Could not add tracks right now.");
+    } finally {
+      setIsRetryingAddTracks(false);
     }
   };
 
@@ -333,7 +389,19 @@ export default function VibeResultsPage() {
         <section className="space-y-4">
           {saveResult ? (
             <div className="space-y-2 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
-              <p>Playlist saved with {tracks.length} tracks.</p>
+              <p>
+                Playlist saved with{" "}
+                {saveResult.tracksAdded ? saveResult.tracksAddedCount : 0} tracks.
+              </p>
+              <p>
+                Visibility:{" "}
+                {saveResult.visibility.final === null
+                  ? "Unknown"
+                  : saveResult.visibility.final
+                    ? "Public"
+                    : "Private"}
+              </p>
+              {saveResult.warning ? <p className="text-amber-700">{saveResult.warning}</p> : null}
               <a
                 href={saveResult.playlistUrl}
                 target="_blank"
@@ -342,6 +410,16 @@ export default function VibeResultsPage() {
               >
                 Open in Spotify
               </a>
+              {!saveResult.tracksAdded ? (
+                <button
+                  type="button"
+                  onClick={() => void handleRetryAddTracks()}
+                  disabled={isRetryingAddTracks}
+                  className="ml-2 inline-flex rounded-full bg-amber-700 px-4 py-2 text-xs font-medium text-white hover:bg-amber-600 disabled:opacity-60"
+                >
+                  {isRetryingAddTracks ? "Retrying..." : "Retry add tracks"}
+                </button>
+              ) : null}
             </div>
           ) : null}
 

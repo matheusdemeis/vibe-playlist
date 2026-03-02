@@ -1,5 +1,4 @@
 import { formatSpotifyApiErrorMessage } from "../spotify/error";
-import { hasGrantedScopes } from "../auth/spotify-session";
 import { SpotifyClientError, spotifyJson } from "../spotify/client";
 export const SPOTIFY_TRACKS_BATCH_SIZE = 100;
 
@@ -111,7 +110,6 @@ export async function savePlaylistToSpotify(input: SavePlaylistInput): Promise<S
       playlist.id,
       trackUris,
       SPOTIFY_TRACKS_BATCH_SIZE,
-      input.grantedScopes,
     );
 
     return {
@@ -167,7 +165,6 @@ export async function addTracksInBatches(
   playlistId: string,
   trackUris: string[],
   batchSize = SPOTIFY_TRACKS_BATCH_SIZE,
-  grantedScopes: string[] = [],
 ): Promise<{ snapshotId: string | null; tracksAddedCount: number }> {
   const validatedTrackUris = validateTrackUris(trackUris);
   if (validatedTrackUris.length === 0) {
@@ -226,48 +223,54 @@ export async function addTracksInBatches(
       { endpoint: `/playlists/${playlistId}` },
     );
   }
-  const isPublicPlaylist = playlist.public === true;
-  const requiredScope = isPublicPlaylist
-    ? "playlist-modify-public"
-    : "playlist-modify-private";
-  const hasRequiredScope = hasGrantedScopes(grantedScopes, [requiredScope]);
-  traceSaveLibrary("spotify_add_tracks_scope_check", {
-    playlistPublic: playlist.public,
-    isPublicPlaylist,
-    requiredScope,
-    grantedScopes,
-    hasRequiredScope,
-  });
-  if (!hasRequiredScope) {
-    throw new PlaylistSaveError(
-      "Reconnect to grant playlist permissions",
-      403,
-      "missing_scopes",
-      { endpoint: `/playlists/${playlistId}` },
-    );
-  }
-
   for (const uris of batches) {
-    try {
-      const payload = { uris };
-      const data = await spotifyJson<{ snapshot_id?: string }>({
-        method: "POST",
-        path: endpoint,
-        accessToken,
-        json: payload,
-      });
-      addedCount += uris.length;
-      latestSnapshotId = typeof data.snapshot_id === "string" ? data.snapshot_id : latestSnapshotId;
-    } catch (error) {
-      if (error instanceof SpotifyClientError) {
-        throw new PlaylistSaveError(
-          formatSpotifyApiErrorMessage(error.status, error.bodyText, error.responseHeaders),
-          error.status,
-          "spotify_add_tracks_failed",
-          { endpoint, body: error.bodyText, extra: { tracksAddedCount: addedCount } },
-        );
+    let batchAdded = false;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        const payload = { uris };
+        const data = await spotifyJson<{ snapshot_id?: string }>({
+          method: "POST",
+          path: endpoint,
+          accessToken,
+          json: payload,
+        });
+        addedCount += uris.length;
+        latestSnapshotId =
+          typeof data.snapshot_id === "string" ? data.snapshot_id : latestSnapshotId;
+        batchAdded = true;
+        break;
+      } catch (error) {
+        if (error instanceof SpotifyClientError) {
+          const retriable = error.status === 403 && attempt < 3;
+          traceSaveLibrary("spotify_add_tracks_batch_attempt_failed", {
+            playlistId,
+            attempt,
+            status: error.status,
+            retriable,
+            bodyExcerpt: summarizeBodyForClient(error.bodyText),
+          });
+          if (retriable) {
+            await wait(300 * attempt);
+            continue;
+          }
+          throw new PlaylistSaveError(
+            formatSpotifyApiErrorMessage(error.status, error.bodyText, error.responseHeaders),
+            error.status,
+            "spotify_add_tracks_failed",
+            { endpoint, body: error.bodyText, extra: { tracksAddedCount: addedCount } },
+          );
+        }
+        throw error;
       }
-      throw error;
+    }
+
+    if (!batchAdded) {
+      throw new PlaylistSaveError(
+        "Failed to add playlist tracks after retries.",
+        502,
+        "spotify_add_tracks_failed",
+        { endpoint, extra: { tracksAddedCount: addedCount } },
+      );
     }
   }
 
@@ -358,45 +361,14 @@ async function createPlaylist(
       external_urls: createdPlaylist.external_urls ?? null,
     },
   });
-  let visibilityWarning: string | undefined;
-  try {
-    const changePayload = { public: finalPublic };
-    traceSaveLibrary("spotify_change_playlist_visibility", {
-      method: "PUT",
-      path: `/playlists/${createdPlaylist.id}`,
-      bodyPreview: JSON.stringify(changePayload).slice(0, 200),
-    });
-    await spotifyJson({
-      method: "PUT",
-      path: `/playlists/${createdPlaylist.id}`,
-      accessToken,
-      json: changePayload,
-    });
-  } catch (error) {
-    if (error instanceof SpotifyClientError) {
-      visibilityWarning = formatSpotifyApiErrorMessage(
-        error.status,
-        error.bodyText,
-        error.responseHeaders,
-      );
-      traceSaveLibrary("spotify_change_playlist_visibility_failed", {
-        playlistId: createdPlaylist.id,
-        status: error.status,
-        message: visibilityWarning,
-      });
-    } else {
-      throw error;
-    }
-  }
-  const playlistAfterUpdate = await spotifyJson<SpotifyPlaylistResponse>({
-    method: "GET",
-    path: `/playlists/${createdPlaylist.id}`,
-    accessToken,
-  });
+  const { finalPublic: enforcedPublic, warning: visibilityWarning } =
+    await enforcePlaylistVisibility(accessToken, createdPlaylist.id, finalPublic);
+  const playlistAfterUpdate = await fetchPlaylistVisibility(accessToken, createdPlaylist.id);
   traceSaveLibrary("spotify_playlist_visibility_after_put", {
     playlistId: createdPlaylist.id,
     requestedPublic: finalPublic,
     finalPublic: playlistAfterUpdate.public,
+    finalPublicAfterEnforce: enforcedPublic,
   });
 
   return {
@@ -405,6 +377,72 @@ async function createPlaylist(
     requestedPublic: finalPublic,
     finalPublic: playlistAfterUpdate.public,
     visibilityWarning,
+  };
+}
+
+async function fetchPlaylistVisibility(
+  accessToken: string,
+  playlistId: string,
+): Promise<SpotifyPlaylistResponse> {
+  return spotifyJson<SpotifyPlaylistResponse>({
+    method: "GET",
+    path: `/playlists/${playlistId}`,
+    accessToken,
+  });
+}
+
+async function enforcePlaylistVisibility(
+  accessToken: string,
+  playlistId: string,
+  requestedPublic: boolean,
+): Promise<{ finalPublic: boolean | null; warning?: string }> {
+  const changePayload = { public: requestedPublic, collaborative: false };
+  traceSaveLibrary("spotify_change_playlist_visibility", {
+    method: "PUT",
+    path: `/playlists/${playlistId}`,
+    bodyPreview: JSON.stringify(changePayload).slice(0, 200),
+  });
+
+  try {
+    await spotifyJson({
+      method: "PUT",
+      path: `/playlists/${playlistId}`,
+      accessToken,
+      json: changePayload,
+    });
+  } catch (error) {
+    if (error instanceof SpotifyClientError) {
+      return {
+        finalPublic: null,
+        warning: formatSpotifyApiErrorMessage(
+          error.status,
+          error.bodyText,
+          error.responseHeaders,
+        ),
+      };
+    }
+    throw error;
+  }
+
+  let observedPublic: boolean | null = null;
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
+    const visibility = await fetchPlaylistVisibility(accessToken, playlistId);
+    observedPublic = visibility.public;
+    traceSaveLibrary("spotify_change_playlist_visibility_check", {
+      playlistId,
+      attempt,
+      requestedPublic,
+      observedPublic,
+    });
+    if (observedPublic === requestedPublic) {
+      return { finalPublic: observedPublic };
+    }
+    await wait(250 * attempt);
+  }
+
+  return {
+    finalPublic: observedPublic,
+    warning: `Visibility check mismatch after retries (requested: ${String(requestedPublic)}, observed: ${String(observedPublic)}).`,
   };
 }
 
@@ -452,4 +490,10 @@ function summarizeBodyForClient(value?: string): string | undefined {
   }
 
   return value.length > 300 ? `${value.slice(0, 297)}...` : value;
+}
+
+async function wait(ms: number): Promise<void> {
+  await new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }

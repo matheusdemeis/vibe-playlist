@@ -49,7 +49,6 @@ describe("addTracksInBatches", () => {
       "playlist-abc",
       uris,
       100,
-      ["playlist-modify-private"],
     );
 
     expect(fetchMock).toHaveBeenCalledTimes(5);

@@ -26,7 +26,7 @@ export async function POST(
   request: NextRequest,
   context: { params: Promise<{ playlistId: string }> },
 ) {
-  const { accessToken, grantedScopes } = await getSpotifySession();
+  const { accessToken } = await getSpotifySession();
   if (!accessToken) {
     return NextResponse.json<AddTracksError>(
       { error: { message: "You are not connected to Spotify.", status: 401 } },
@@ -77,7 +77,6 @@ export async function POST(
       playlistId,
       trackUris,
       100,
-      grantedScopes,
     );
     return NextResponse.json<AddTracksSuccess>({
       playlistId,
