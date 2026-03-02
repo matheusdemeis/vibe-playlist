@@ -19,6 +19,7 @@ type AddTracksError = {
     message: string;
     status: number;
     endpoint?: string;
+    spotifyBody?: string;
   };
 };
 
@@ -80,6 +81,7 @@ export async function POST(
                 : error.message,
             status: error.status,
             endpoint: error.endpoint,
+            spotifyBody: error.body ? truncateBody(error.body) : undefined,
           },
         },
         { status: error.status },
@@ -91,6 +93,10 @@ export async function POST(
       { status: 502 },
     );
   }
+}
+
+function truncateBody(value: string): string {
+  return value.length > 300 ? `${value.slice(0, 297)}...` : value;
 }
 
 function parseTrackUris(value: unknown): string[] {

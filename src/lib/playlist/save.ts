@@ -43,6 +43,7 @@ export type SavePlaylistResult = {
     message: string;
     status: number;
     endpoint?: string;
+    spotifyBody?: string;
   };
 };
 
@@ -116,6 +117,10 @@ export async function savePlaylistToSpotify(input: SavePlaylistInput): Promise<S
         message,
         status,
         endpoint: error instanceof PlaylistSaveError ? error.endpoint : undefined,
+        spotifyBody:
+          error instanceof PlaylistSaveError
+            ? summarizeBodyForClient(error.body)
+            : undefined,
       },
     };
   }
@@ -357,4 +362,12 @@ function traceSaveLibrary(event: string, payload: Record<string, unknown>): void
   }
 
   console.log(`[TRACE][save-lib] ${event}`, payload);
+}
+
+function summarizeBodyForClient(value?: string): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  return value.length > 300 ? `${value.slice(0, 297)}...` : value;
 }
