@@ -21,6 +21,11 @@ export async function getSpotifySession(): Promise<SpotifySession> {
   return { accessToken, scopes };
 }
 
+export async function getSpotifyAccessToken(): Promise<string | null> {
+  const { accessToken } = await getSpotifySession();
+  return accessToken;
+}
+
 export function hasRequiredPlaylistScopes(scopes: string[]): boolean {
   return REQUIRED_PLAYLIST_SCOPES.every((scope) => scopes.includes(scope));
 }

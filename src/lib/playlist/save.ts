@@ -65,6 +65,12 @@ export class PlaylistSaveError extends Error {
 }
 
 export async function savePlaylistToSpotify(input: SavePlaylistInput): Promise<SavePlaylistResult> {
+  const sharedAccessToken = input.accessToken;
+  traceSaveLibrary("spotify_save_shared_token", {
+    tokenLength: sharedAccessToken.length,
+    usedForCreateAndAdd: true,
+  });
+
   const trackUris = buildTrackUris(input.trackUris);
   if (trackUris.length === 0) {
     throw new PlaylistSaveError(
@@ -74,14 +80,14 @@ export async function savePlaylistToSpotify(input: SavePlaylistInput): Promise<S
     );
   }
 
-  const playlist = await createPlaylist(input.accessToken, {
+  const playlist = await createPlaylist(sharedAccessToken, {
     name: input.name,
     description: input.description,
     isPublic: input.isPublic,
   });
 
   try {
-    const snapshotId = await addTracksInBatches(input.accessToken, playlist.id, trackUris);
+    const snapshotId = await addTracksInBatches(sharedAccessToken, playlist.id, trackUris);
 
     return {
       playlistId: playlist.id,

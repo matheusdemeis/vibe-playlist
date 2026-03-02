@@ -1,8 +1,7 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+import { getSpotifyAccessToken } from "@/lib/auth/spotify-session";
 
-const ACCESS_TOKEN_COOKIE_NAME = "spotify_access_token";
-
-export async function GET(request: NextRequest) {
-  const accessToken = request.cookies.get(ACCESS_TOKEN_COOKIE_NAME)?.value;
+export async function GET() {
+  const accessToken = await getSpotifyAccessToken();
   return NextResponse.json({ connected: Boolean(accessToken) });
 }
