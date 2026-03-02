@@ -170,13 +170,7 @@ export async function addTracksInBatches(
     let batchAdded = false;
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       try {
-        const payload = { uris };
-        const data = await spotifyJson<{ snapshot_id?: string }>({
-          method: "POST",
-          path: endpoint,
-          accessToken,
-          json: payload,
-        });
+        const data = await addTrackBatch(accessToken, endpoint, uris);
         addedCount += uris.length;
         latestSnapshotId =
           typeof data.snapshot_id === "string" ? data.snapshot_id : latestSnapshotId;
@@ -221,6 +215,40 @@ export async function addTracksInBatches(
     snapshotId: latestSnapshotId,
     tracksAddedCount: addedCount,
   };
+}
+
+async function addTrackBatch(
+  accessToken: string,
+  endpoint: string,
+  uris: string[],
+): Promise<{ snapshot_id?: string }> {
+  try {
+    return await spotifyJson<{ snapshot_id?: string }>({
+      method: "POST",
+      path: endpoint,
+      accessToken,
+      json: { uris },
+    });
+  } catch (error) {
+    if (!(error instanceof SpotifyClientError) || error.status !== 403) {
+      throw error;
+    }
+
+    traceSaveLibrary("spotify_add_tracks_query_fallback", {
+      endpoint,
+      uriCount: uris.length,
+      firstThreeUris: uris.slice(0, 3),
+      originalStatus: error.status,
+      originalBodyExcerpt: summarizeBodyForClient(error.bodyText),
+    });
+
+    return spotifyJson<{ snapshot_id?: string }>({
+      method: "POST",
+      path: endpoint,
+      accessToken,
+      query: { uris: uris.join(",") },
+    });
+  }
 }
 
 export function chunkTrackUris(trackUris: string[], batchSize = SPOTIFY_TRACKS_BATCH_SIZE): string[][] {

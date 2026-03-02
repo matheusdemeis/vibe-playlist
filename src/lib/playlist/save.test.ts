@@ -59,6 +59,40 @@ describe("addTracksInBatches", () => {
     expect(result.snapshotId).toBe("ok");
     expect(result.tracksAddedCount).toBe(205);
   });
+
+  it("falls back to query uris when json add-tracks receives 403", async () => {
+    let callCount = 0;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      callCount += 1;
+      const url = String(input);
+
+      if (callCount === 1) {
+        return new Response(
+          JSON.stringify({ error: { status: 403, message: "Forbidden" } }),
+          { status: 403 },
+        );
+      }
+
+      if (!url.includes("uris=")) {
+        return new Response(JSON.stringify({ error: "missing fallback query" }), { status: 500 });
+      }
+
+      return new Response(JSON.stringify({ snapshot_id: "fallback-ok" }), { status: 201 });
+    });
+
+    const uris = [
+      "spotify:track:4iV5W9uYEdYUVa79Axb7Rh",
+      "spotify:track:1301WleyT98MSxVHPZCA6M",
+    ];
+    const result = await addTracksInBatches("token-123", "playlist-abc", uris, 100);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[1][0])).toContain(
+      "/playlists/playlist-abc/tracks?uris=",
+    );
+    expect(result.snapshotId).toBe("fallback-ok");
+    expect(result.tracksAddedCount).toBe(2);
+  });
 });
 
 describe("normalizeTrackUris", () => {
