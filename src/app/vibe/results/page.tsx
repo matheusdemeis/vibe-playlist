@@ -240,7 +240,7 @@ export default function VibeResultsPage() {
         body: JSON.stringify({
           name: trimmedName,
           description: playlistDescription.trim(),
-          isPublic: isPublicPlaylist,
+          isPublic: isPublicPlaylist === true,
           trackUris: tracks.map((track) => track.uri),
         }),
       });

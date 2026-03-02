@@ -108,7 +108,7 @@ export function validateSavePayload(payload: SavePlaylistRequestBody):
   | { ok: false; error: string } {
   const name = typeof payload.name === "string" ? payload.name.trim() : "";
   const description = typeof payload.description === "string" ? payload.description.trim() : "";
-  const isPublic = payload.isPublic === true;
+  const isPublic = parsePublicFlag(payload.isPublic);
   const trackUris = parseStringArray(payload.trackUris);
 
   if (!name) {
@@ -128,6 +128,10 @@ export function validateSavePayload(payload: SavePlaylistRequestBody):
       trackUris,
     },
   };
+}
+
+function parsePublicFlag(value: unknown): boolean {
+  return value === true;
 }
 
 function parseStringArray(value: unknown): string[] {
