@@ -10,6 +10,19 @@ type SpotifyCreatePlaylistResponse = {
   };
 };
 
+type SpotifyMeResponse = {
+  id: string;
+  display_name?: string | null;
+};
+
+type SpotifyPlaylistResponse = {
+  owner: {
+    id: string;
+  };
+  collaborative: boolean;
+  public: boolean | null;
+};
+
 type SavePlaylistInput = {
   accessToken: string;
   name: string;
@@ -119,8 +132,28 @@ export async function addTracksInBatches(
   let latestSnapshotId: string | null = null;
   const endpoint = `/playlists/${playlistId}/tracks`;
   const fullUrl = `${SPOTIFY_API_BASE_URL}${endpoint}`;
+  const me = await spotifyRequest<SpotifyMeResponse>("/me", accessToken, { method: "GET" });
+  const playlist = await spotifyRequest<SpotifyPlaylistResponse>(
+    `/playlists/${playlistId}`,
+    accessToken,
+    { method: "GET" },
+  );
+
+  traceSaveLibrary("spotify_add_tracks_identity_check", {
+    meId: me.id,
+    meDisplayName: me.display_name ?? null,
+    playlistOwnerId: playlist.owner.id,
+    playlistCollaborative: playlist.collaborative,
+    playlistPublic: playlist.public,
+    ownerMatchesMe: playlist.owner.id === me.id,
+  });
 
   for (const uris of batches) {
+    const addTracksHeaders = {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    };
+
     traceSaveLibrary("spotify_add_tracks_request", {
       playlistId,
       endpoint,
@@ -128,14 +161,14 @@ export async function addTracksInBatches(
       attemptedTrackCount: uris.length,
       firstTrackUris: uris.slice(0, 3),
       redactedCount: Math.max(0, uris.length - 3),
+      hasAuthorizationHeader: Boolean(addTracksHeaders.Authorization),
+      authTokenLength: accessToken.length,
+      hasContentTypeHeader: addTracksHeaders["Content-Type"] === "application/json",
     });
 
     const response = await fetch(fullUrl, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
+      headers: addTracksHeaders,
       body: JSON.stringify({ uris }),
     });
 
@@ -145,6 +178,7 @@ export async function addTracksInBatches(
     traceSaveLibrary("spotify_add_tracks_response", {
       endpoint,
       status: response.status,
+      wwwAuthenticate: response.headers.get("WWW-Authenticate"),
       bodyText: rawBody,
       bodyJson: parsedBody,
     });
