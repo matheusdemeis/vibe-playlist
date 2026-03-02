@@ -33,20 +33,8 @@ type CreatedPlaylist = {
 export type SavePlaylistResult = {
   playlistId: string;
   playlistUrl: string;
-  visibility: {
-    requested: boolean;
-    final: boolean | null;
-  };
-  snapshotId: string | null;
   tracksAddedCount: number;
-  tracksAdded: boolean;
-  warning?: string;
-  error?: {
-    message: string;
-    status: number;
-    endpoint?: string;
-    spotifyBody?: string;
-  };
+  visibilityUpdated: boolean;
 };
 
 export class PlaylistSaveError extends Error {
@@ -95,17 +83,18 @@ export async function savePlaylistToSpotify(input: SavePlaylistInput): Promise<S
     trackUris,
     SPOTIFY_TRACKS_BATCH_SIZE,
   );
+  void snapshotId;
+  const visibilityUpdated = await updatePlaylistVisibility(
+    sharedAccessToken,
+    playlist.id,
+    playlist.requestedPublic,
+  );
 
   return {
     playlistId: playlist.id,
     playlistUrl: playlist.url,
-    visibility: {
-      requested: playlist.requestedPublic,
-      final: playlist.finalPublic,
-    },
-    snapshotId,
     tracksAddedCount,
-    tracksAdded: true,
+    visibilityUpdated,
   };
 }
 
@@ -229,6 +218,34 @@ async function createPlaylist(
     requestedPublic: finalPublic,
     finalPublic: createdPlaylist.public ?? finalPublic,
   };
+}
+
+async function updatePlaylistVisibility(
+  accessToken: string,
+  playlistId: string,
+  requestedPublic: boolean,
+): Promise<boolean> {
+  try {
+    await spotifyJson({
+      method: "PUT",
+      path: `/playlists/${playlistId}`,
+      accessToken,
+      json: { public: requestedPublic },
+    });
+    return true;
+  } catch (error) {
+    if (error instanceof SpotifyClientError) {
+      traceSaveLibrary("spotify_visibility_update_warning", {
+        playlistId,
+        requestedPublic,
+        status: error.status,
+        endpoint: error.path,
+        bodyExcerpt: error.bodyText.slice(0, 200),
+      });
+      return false;
+    }
+    throw error;
+  }
 }
 
 export function buildTrackUris(trackIdentifiers: string[]): string[] {
