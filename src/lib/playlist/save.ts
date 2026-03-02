@@ -38,7 +38,6 @@ type CreatedPlaylist = {
   url: string;
   requestedPublic: boolean;
   finalPublic: boolean | null;
-  visibilityUpdated: boolean;
 };
 
 export type SavePlaylistResult = {
@@ -98,11 +97,17 @@ export async function savePlaylistToSpotify(input: SavePlaylistInput): Promise<S
     SPOTIFY_TRACKS_BATCH_SIZE,
   );
   void snapshotId;
+  // Visibility updates are best-effort and should not block add-tracks success.
+  const visibilityUpdated = await enforceVisibilityAfterCreate(
+    sharedAccessToken,
+    playlist.id,
+    playlist.requestedPublic,
+  );
   return {
     playlistId: playlist.id,
     playlistUrl: playlist.url,
     tracksAddedCount,
-    visibilityUpdated: playlist.visibilityUpdated,
+    visibilityUpdated,
   };
 }
 
@@ -306,17 +311,11 @@ async function createPlaylist(
       external_urls: createdPlaylist.external_urls ?? null,
     },
   });
-  const visibilityUpdated = await enforceVisibilityAfterCreate(
-    accessToken,
-    createdPlaylist.id,
-    finalPublic,
-  );
   return {
     id: createdPlaylist.id,
     url: createdPlaylist.external_urls.spotify,
     requestedPublic: finalPublic,
     finalPublic: createdPlaylist.public ?? finalPublic,
-    visibilityUpdated,
   };
 }
 
