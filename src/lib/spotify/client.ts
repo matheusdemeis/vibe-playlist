@@ -2,7 +2,7 @@ const SPOTIFY_API_BASE_URL = "https://api.spotify.com/v1";
 
 type QueryParams = Record<string, string | number | boolean | undefined>;
 
-type SpotifyRequestOptions = {
+type SpotifyJsonOptions = {
   method?: string;
   path: string;
   accessToken: string;
@@ -37,7 +37,7 @@ export class SpotifyClientError extends Error {
   }
 }
 
-export async function spotifyRequest<T>(options: SpotifyRequestOptions): Promise<T> {
+export async function spotifyJson<T>(options: SpotifyJsonOptions): Promise<T> {
   const method = options.method ?? "GET";
   const path = options.path.startsWith("/") ? options.path : `/${options.path}`;
   const url = buildSpotifyUrl(path, options.query);
@@ -82,6 +82,8 @@ export async function spotifyRequest<T>(options: SpotifyRequestOptions): Promise
 
   return JSON.parse(responseBodyText) as T;
 }
+
+export const spotifyRequest = spotifyJson;
 
 function buildSpotifyUrl(path: string, query?: QueryParams): string {
   const baseUrl = `${SPOTIFY_API_BASE_URL}${path}`;
