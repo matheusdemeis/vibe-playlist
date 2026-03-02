@@ -51,14 +51,6 @@ export async function spotifyRequest<T>(options: SpotifyRequestOptions): Promise
     body = JSON.stringify(options.json);
   }
 
-  traceSpotifyHttp("request", {
-    method,
-    url,
-    headers: redactHeaders(headers),
-    bodyType: body === undefined ? "undefined" : "string",
-    jsonPreview: body?.slice(0, 200),
-  });
-
   const response = await (options.fetcher ?? fetch)(url, {
     method,
     headers,
@@ -66,14 +58,14 @@ export async function spotifyRequest<T>(options: SpotifyRequestOptions): Promise
   });
 
   const responseBodyText = await response.text();
-  traceSpotifyHttp("response", {
-    method,
-    url,
-    status: response.status,
-    bodyText: responseBodyText,
-  });
-
   if (!response.ok) {
+    traceSpotifyHttp("error", {
+      method,
+      endpoint: path,
+      status: response.status,
+      bodyExcerpt: excerpt(responseBodyText),
+      headers: redactHeaders(headers),
+    });
     throw new SpotifyClientError({
       message: `Spotify request failed (${response.status})`,
       status: response.status,
@@ -131,4 +123,8 @@ function traceSpotifyHttp(event: string, payload: Record<string, unknown>): void
   }
 
   console.log(`[TRACE][spotify-http] ${event}`, payload);
+}
+
+function excerpt(value: string): string {
+  return value.length > 220 ? `${value.slice(0, 217)}...` : value;
 }

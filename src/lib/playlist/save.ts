@@ -1,8 +1,6 @@
 import { formatSpotifyApiErrorMessage } from "../spotify/error";
 import { getRequiredPlaylistModifyScope, hasGrantedScopes } from "../auth/spotify-session";
 import { SpotifyClientError, spotifyRequest } from "../spotify/client";
-
-const SPOTIFY_API_BASE_URL = "https://api.spotify.com/v1";
 export const SPOTIFY_TRACKS_BATCH_SIZE = 100;
 
 type SpotifyCreatePlaylistResponse = {
@@ -148,7 +146,6 @@ export async function addTracksInBatches(
   );
   let latestSnapshotId: string | null = null;
   const endpoint = `/playlists/${playlistId}/tracks`;
-  const fullUrl = `${SPOTIFY_API_BASE_URL}${endpoint}`;
   let me: SpotifyMeResponse;
   let playlist: SpotifyPlaylistResponse;
   try {
@@ -215,16 +212,12 @@ export async function addTracksInBatches(
 
     traceSaveLibrary("spotify_add_tracks_request", {
       method: "POST",
-      fullUrl,
-      playlistId,
       endpoint,
-      url: fullUrl,
+      playlistId,
       attemptedTrackCount: uris.length,
       hasAuthorizationHeader: Boolean(addTracksHeaders.Authorization),
       authTokenLength: accessToken.length,
       hasContentTypeHeader: addTracksHeaders["Content-Type"] === "application/json",
-      rawBodyType: typeof uris,
-      jsonBodyPreview: JSON.stringify({ uris }).slice(0, 200),
     });
 
     try {
@@ -281,15 +274,8 @@ async function createPlaylist(
   };
   traceSaveLibrary("spotify_create_playlist_request", {
     method: "POST",
-    url: `${SPOTIFY_API_BASE_URL}/me/playlists`,
     endpoint: "/me/playlists",
-    headers: {
-      Authorization: "[REDACTED]",
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
-    rawBodyType: typeof payload,
-    jsonBodyPreview: JSON.stringify(payload).slice(0, 200),
+    public: payload.public,
   });
   let createdPlaylist: SpotifyCreatePlaylistResponse;
   try {
