@@ -35,8 +35,10 @@ export async function GET(request: NextRequest) {
 
   const clientId = process.env.SPOTIFY_CLIENT_ID;
   const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
-  const redirectUri = process.env.SPOTIFY_REDIRECT_URI ?? DEFAULT_REDIRECT_URI;
-  const appUrl = process.env.APP_URL ?? DEFAULT_APP_URL;
+  const redirectUri = normalizeDevSpotifyUrl(
+    process.env.SPOTIFY_REDIRECT_URI ?? DEFAULT_REDIRECT_URI,
+  );
+  const appUrl = normalizeDevSpotifyUrl(process.env.APP_URL ?? DEFAULT_APP_URL);
 
   if (!clientId || !clientSecret) {
     return NextResponse.json(
@@ -91,4 +93,21 @@ export async function GET(request: NextRequest) {
   });
 
   return response;
+}
+
+function normalizeDevSpotifyUrl(value: string): string {
+  if (process.env.NODE_ENV === "production") {
+    return value;
+  }
+
+  try {
+    const url = new URL(value);
+    if (url.hostname === "localhost" && url.port === "5000") {
+      url.hostname = "127.0.0.1";
+      return url.toString();
+    }
+    return value;
+  } catch {
+    return value;
+  }
 }

@@ -13,7 +13,9 @@ const SPOTIFY_SCOPES = [
 
 export async function GET(request: NextRequest) {
   const clientId = process.env.SPOTIFY_CLIENT_ID;
-  const redirectUri = process.env.SPOTIFY_REDIRECT_URI ?? DEFAULT_REDIRECT_URI;
+  const redirectUri = normalizeDevSpotifyUrl(
+    process.env.SPOTIFY_REDIRECT_URI ?? DEFAULT_REDIRECT_URI,
+  );
 
   if (!clientId) {
     return NextResponse.json({ error: "Missing SPOTIFY_CLIENT_ID." }, { status: 500 });
@@ -39,4 +41,21 @@ export async function GET(request: NextRequest) {
   }
 
   return NextResponse.redirect(`${SPOTIFY_AUTHORIZE_URL}?${params.toString()}`);
+}
+
+function normalizeDevSpotifyUrl(value: string): string {
+  if (process.env.NODE_ENV === "production") {
+    return value;
+  }
+
+  try {
+    const url = new URL(value);
+    if (url.hostname === "localhost" && url.port === "5000") {
+      url.hostname = "127.0.0.1";
+      return url.toString();
+    }
+    return value;
+  } catch {
+    return value;
+  }
 }
