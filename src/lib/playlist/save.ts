@@ -32,12 +32,21 @@ export type SavePlaylistResult = {
 export class PlaylistSaveError extends Error {
   status: number;
   code: string;
+  endpoint?: string;
+  body?: string;
 
-  constructor(message: string, status = 500, code = "playlist_save_failed") {
+  constructor(
+    message: string,
+    status = 500,
+    code = "playlist_save_failed",
+    details?: { endpoint?: string; body?: string },
+  ) {
     super(message);
     this.name = "PlaylistSaveError";
     this.status = status;
     this.code = code;
+    this.endpoint = details?.endpoint;
+    this.body = details?.body;
   }
 }
 
@@ -94,17 +103,51 @@ export async function addTracksInBatches(
 ): Promise<string | null> {
   const batches = chunkTrackUris(trackUris, Math.min(100, Math.max(1, Math.trunc(batchSize))));
   let latestSnapshotId: string | null = null;
+  const endpoint = `/playlists/${playlistId}/tracks`;
+  const fullUrl = `${SPOTIFY_API_BASE_URL}${endpoint}`;
 
   for (const uris of batches) {
-    const response = await spotifyRequest<{ snapshot_id: string }>(
-      `/playlists/${playlistId}/tracks`,
-      accessToken,
-      {
+    traceSaveLibrary("spotify_add_tracks_request", {
+      playlistId,
+      endpoint,
+      url: fullUrl,
+      attemptedTrackCount: uris.length,
+      firstTrackUris: uris.slice(0, 3),
+      redactedCount: Math.max(0, uris.length - 3),
+    });
+
+    const response = await fetch(fullUrl, {
       method: "POST",
-      body: JSON.stringify({ uris }),
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
       },
-    );
-    latestSnapshotId = response.snapshot_id;
+      body: JSON.stringify({ uris }),
+    });
+
+    const rawBody = await response.text();
+    const parsedBody = parseJsonSafely(rawBody);
+
+    traceSaveLibrary("spotify_add_tracks_response", {
+      endpoint,
+      status: response.status,
+      bodyText: rawBody,
+      bodyJson: parsedBody,
+    });
+
+    if (!response.ok) {
+      throw new PlaylistSaveError(
+        formatSpotifyApiErrorMessage(response.status, rawBody, response.headers),
+        response.status,
+        "spotify_add_tracks_failed",
+        { endpoint, body: rawBody },
+      );
+    }
+
+    latestSnapshotId =
+      typeof parsedBody === "object" && parsedBody !== null && "snapshot_id" in parsedBody
+        ? String((parsedBody as { snapshot_id?: string }).snapshot_id ?? "")
+        : null;
   }
 
   return latestSnapshotId;
@@ -197,4 +240,16 @@ function traceSaveLibrary(event: string, payload: Record<string, unknown>): void
   }
 
   console.log(`[TRACE][save-lib] ${event}`, payload);
+}
+
+function parseJsonSafely(value: string): unknown {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return null;
+  }
 }
