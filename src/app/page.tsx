@@ -139,7 +139,7 @@ export default function Home() {
         body: JSON.stringify({
           name,
           description: playlistDescription.trim(),
-          isPublic: isPublicPlaylist,
+          isPublic: isPublicPlaylist === true,
           trackUris: tracks.map((track) => track.uri),
         }),
       });
