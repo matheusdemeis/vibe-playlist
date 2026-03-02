@@ -130,7 +130,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       tracks: trackSearch.data.tracks.items
         .filter((track) => track.is_playable !== false)
-        .filter((track) => track.restrictions?.reason !== "market")
+        .filter((track) => !track.restrictions?.reason)
         .map((track) => ({
           id: track.id,
           name: track.name,
