@@ -87,13 +87,16 @@ export async function POST(
     });
   } catch (error) {
     if (error instanceof PlaylistSaveError) {
-      const shouldReconnect = error.status === 403;
+      const isOwnerMismatch = error.code === "playlist_owner_mismatch";
+      const shouldReconnect = error.status === 403 && !isOwnerMismatch;
       return NextResponse.json<AddTracksError>(
         {
           error: {
-            message: shouldReconnect
-              ? "Reconnect Spotify to grant playlist permissions"
-              : error.message,
+            message: isOwnerMismatch
+              ? "Connected Spotify account does not own this playlist. Reconnect and try again."
+              : shouldReconnect
+                ? "Reconnect Spotify to grant playlist permissions"
+                : error.message,
             status: error.status,
             endpoint: error.endpoint,
           },

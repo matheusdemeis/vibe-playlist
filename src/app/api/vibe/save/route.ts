@@ -81,13 +81,16 @@ export async function POST(request: NextRequest) {
     return NextResponse.json<SavePlaylistApiResponse>(result);
   } catch (error) {
     if (error instanceof PlaylistSaveError) {
-      const shouldReconnect = error.status === 403;
+      const isOwnerMismatch = error.code === "playlist_owner_mismatch";
+      const shouldReconnect = error.status === 403 && !isOwnerMismatch;
       return NextResponse.json<SavePlaylistApiResponse>(
         {
-          error: shouldReconnect
-            ? "Reconnect Spotify to grant playlist permissions"
-            : error.message,
-          code: shouldReconnect ? "missing_scopes" : error.code,
+          error: isOwnerMismatch
+            ? "Connected Spotify account does not own this playlist. Reconnect and try again."
+            : shouldReconnect
+              ? "Reconnect Spotify to grant playlist permissions"
+              : error.message,
+          code: isOwnerMismatch ? "playlist_owner_mismatch" : shouldReconnect ? "missing_scopes" : error.code,
         },
         { status: error.status },
       );

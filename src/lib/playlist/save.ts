@@ -153,6 +153,14 @@ export async function addTracksInBatches(
     playlistPublic: playlist.public,
     ownerMatchesMe: playlist.owner.id === me.id,
   });
+  if (playlist.owner.id !== me.id) {
+    throw new PlaylistSaveError(
+      "Connected Spotify account does not own this playlist. Reconnect and try again.",
+      403,
+      "playlist_owner_mismatch",
+      { endpoint: `/playlists/${playlistId}` },
+    );
+  }
 
   for (const uris of batches) {
     const addTracksHeaders = {
