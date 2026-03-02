@@ -66,6 +66,13 @@ export async function GET(request: NextRequest) {
   }
 
   const data = (await tokenResponse.json()) as SpotifyTokenResponse;
+  const grantedScopes =
+    typeof data.scope === "string"
+      ? data.scope
+          .split(" ")
+          .map((scope) => scope.trim())
+          .filter(Boolean)
+      : [];
   const response = NextResponse.redirect(appUrl);
 
   response.cookies.set(ACCESS_TOKEN_COOKIE_NAME, data.access_token, {
@@ -75,7 +82,7 @@ export async function GET(request: NextRequest) {
     path: "/",
     maxAge: data.expires_in,
   });
-  response.cookies.set(GRANTED_SCOPES_COOKIE_NAME, data.scope ?? "", {
+  response.cookies.set(GRANTED_SCOPES_COOKIE_NAME, JSON.stringify(grantedScopes), {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
