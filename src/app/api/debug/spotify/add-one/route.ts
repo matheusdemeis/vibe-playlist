@@ -13,7 +13,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Not found." }, { status: 404 });
   }
 
-  const { accessToken } = await getSpotifySession();
+  const headerToken = request.headers.get("x-spotify-access-token")?.trim() ?? "";
+  const { accessToken: sessionToken } = await getSpotifySession();
+  const accessToken = headerToken || sessionToken;
   if (!accessToken) {
     return NextResponse.json(
       {
@@ -45,6 +47,16 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const meResponse = await fetch(`${SPOTIFY_API_BASE}/me`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: "application/json",
+    },
+    cache: "no-store",
+  });
+  const meText = await meResponse.text();
+
   const spotifyResponse = await fetch(`${SPOTIFY_API_BASE}/playlists/${playlistId}/tracks`, {
     method: "POST",
     headers: {
@@ -61,10 +73,17 @@ export async function POST(request: NextRequest) {
 
   return NextResponse.json(
     {
-      status: spotifyResponse.status,
-      body: responseBody,
+      tokenSource: headerToken ? "x-spotify-access-token" : "session",
+      meStatus: meResponse.status,
+      meBody: parseBody(meText),
+      addTracksStatus: spotifyResponse.status,
+      addTracksBody: responseBody,
       headers: {
         wwwAuthenticate: spotifyResponse.headers.get("www-authenticate"),
+        spotifyRequestId:
+          spotifyResponse.headers.get("spotify-request-id") ??
+          spotifyResponse.headers.get("x-spotify-request-id") ??
+          spotifyResponse.headers.get("x-request-id"),
       },
     },
     { status: 200 },
