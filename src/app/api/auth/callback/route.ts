@@ -65,11 +65,13 @@ export async function GET(request: NextRequest) {
   }
 
   const data = (await tokenResponse.json()) as SpotifyTokenResponse;
+  // Never log the access token in development logs.
   if (process.env.NODE_ENV === "development") {
     console.log("Spotify token exchange metadata", {
       scope: data.scope ?? "",
       token_type: data.token_type,
       expires_in: data.expires_in,
+      grant_type: "authorization_code",
     });
   }
   const grantedScopes =

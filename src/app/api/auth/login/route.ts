@@ -5,6 +5,7 @@ import { getSpotifyRedirectUri } from "@/lib/config/app-url";
 
 const SPOTIFY_AUTHORIZE_URL = "https://accounts.spotify.com/authorize";
 const STATE_COOKIE_NAME = "spotify_auth_state";
+// Playlist write operations require both private/public modify scopes.
 const SPOTIFY_SCOPES = [
   "playlist-modify-private",
   "playlist-modify-public",
@@ -27,6 +28,7 @@ export async function GET(request: NextRequest) {
     path: "/",
   });
 
+  // URLSearchParams guarantees proper encoding for space-delimited scope values.
   const params = new URLSearchParams({
     client_id: clientId,
     response_type: "code",

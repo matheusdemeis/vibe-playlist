@@ -73,6 +73,9 @@ export class PlaylistSaveError extends Error {
 
 export async function savePlaylistToSpotify(input: SavePlaylistInput): Promise<SavePlaylistResult> {
   const sharedAccessToken = input.accessToken;
+  traceSaveLibrary("spotify_save_scope_context", {
+    grantedScopes: input.grantedScopes,
+  });
 
   const trackUris = buildTrackUris(input.trackUris);
   if (trackUris.length === 0) {
@@ -125,6 +128,7 @@ export async function addTracksInBatches(
   let latestSnapshotId: string | null = null;
   let addedCount = 0;
   const endpoint = `/playlists/${playlistId}/tracks`;
+  // /me succeeds only for user tokens from Authorization Code flow.
   const me = await getCurrentSpotifyUser(accessToken);
   for (const uris of batches) {
     for (let attempt = 1; attempt <= 3; attempt += 1) {
@@ -146,6 +150,11 @@ export async function addTracksInBatches(
 
         if (error.status === 403) {
           await logPlaylistOwnershipForForbidden(accessToken, playlistId, me.id);
+          traceSaveLibrary("spotify_add_tracks_403", {
+            playlistId,
+            endpoint,
+            bodyExcerpt: error.bodyText.slice(0, 240),
+          });
           throw new PlaylistSaveError(
             formatSpotifyApiErrorMessage(error.status, error.bodyText, error.responseHeaders),
             error.status,
