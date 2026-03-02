@@ -48,6 +48,7 @@ describe("addTracksInBatches", () => {
       "token-123",
       "playlist-abc",
       uris,
+      undefined,
       100,
     );
 

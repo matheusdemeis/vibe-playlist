@@ -109,6 +109,7 @@ export async function savePlaylistToSpotify(input: SavePlaylistInput): Promise<S
       sharedAccessToken,
       playlist.id,
       trackUris,
+      playlist.requestedPublic,
       SPOTIFY_TRACKS_BATCH_SIZE,
     );
 
@@ -164,6 +165,7 @@ export async function addTracksInBatches(
   accessToken: string,
   playlistId: string,
   trackUris: string[],
+  requestedPublic?: boolean,
   batchSize = SPOTIFY_TRACKS_BATCH_SIZE,
 ): Promise<{ snapshotId: string | null; tracksAddedCount: number }> {
   const validatedTrackUris = validateTrackUris(trackUris);
@@ -222,6 +224,16 @@ export async function addTracksInBatches(
       "playlist_owner_mismatch",
       { endpoint: `/playlists/${playlistId}` },
     );
+  }
+  if (requestedPublic === false && playlist.public === true) {
+    const visibilityResult = await enforcePlaylistVisibility(accessToken, playlistId, false);
+    traceSaveLibrary("spotify_add_tracks_private_reenforce", {
+      playlistId,
+      requestedPublic,
+      beforePublic: playlist.public,
+      afterPublic: visibilityResult.finalPublic,
+      warning: visibilityResult.warning,
+    });
   }
   for (const uris of batches) {
     let batchAdded = false;
@@ -430,35 +442,35 @@ async function enforcePlaylistVisibility(
   requestedPublic: boolean,
 ): Promise<{ finalPublic: boolean | null; warning?: string }> {
   const changePayload = { public: requestedPublic, collaborative: false };
-  traceSaveLibrary("spotify_change_playlist_visibility", {
-    method: "PUT",
-    path: `/playlists/${playlistId}`,
-    bodyPreview: JSON.stringify(changePayload).slice(0, 200),
-  });
-
-  try {
-    await spotifyJson({
-      method: "PUT",
-      path: `/playlists/${playlistId}`,
-      accessToken,
-      json: changePayload,
-    });
-  } catch (error) {
-    if (error instanceof SpotifyClientError) {
-      return {
-        finalPublic: null,
-        warning: formatSpotifyApiErrorMessage(
-          error.status,
-          error.bodyText,
-          error.responseHeaders,
-        ),
-      };
-    }
-    throw error;
-  }
-
   let observedPublic: boolean | null = null;
   for (let attempt = 1; attempt <= 4; attempt += 1) {
+    traceSaveLibrary("spotify_change_playlist_visibility", {
+      method: "PUT",
+      path: `/playlists/${playlistId}`,
+      attempt,
+      bodyPreview: JSON.stringify(changePayload).slice(0, 200),
+    });
+    try {
+      await spotifyJson({
+        method: "PUT",
+        path: `/playlists/${playlistId}`,
+        accessToken,
+        json: changePayload,
+      });
+    } catch (error) {
+      if (error instanceof SpotifyClientError) {
+        return {
+          finalPublic: null,
+          warning: formatSpotifyApiErrorMessage(
+            error.status,
+            error.bodyText,
+            error.responseHeaders,
+          ),
+        };
+      }
+      throw error;
+    }
+
     const visibility = await fetchPlaylistVisibility(accessToken, playlistId);
     observedPublic = visibility.public;
     traceSaveLibrary("spotify_change_playlist_visibility_check", {

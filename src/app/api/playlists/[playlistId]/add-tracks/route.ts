@@ -76,6 +76,7 @@ export async function POST(
       accessToken,
       playlistId,
       trackUris,
+      undefined,
       100,
     );
     return NextResponse.json<AddTracksSuccess>({
