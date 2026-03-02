@@ -115,6 +115,56 @@ describe("addTracksInBatches", () => {
     expect(result.snapshotId).toBe("replace-ok");
     expect(result.tracksAddedCount).toBe(1);
   });
+
+  it("falls back to single-track inserts when batch is forbidden", async () => {
+    let postCallIndex = 0;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const method = init?.method ?? "GET";
+      if (method === "PUT") {
+        return new Response(
+          JSON.stringify({ error: { status: 403, message: "Forbidden" } }),
+          { status: 403 },
+        );
+      }
+
+      if (method !== "POST") {
+        return new Response(JSON.stringify({ error: "unexpected method" }), { status: 500 });
+      }
+
+      const url = String(input);
+      const parsedBody = JSON.parse((init?.body as string) ?? "{}") as { uris?: string[] };
+      postCallIndex += 1;
+
+      if (postCallIndex === 1 && (parsedBody.uris?.length ?? 0) > 1) {
+        return new Response(
+          JSON.stringify({ error: { status: 403, message: "Forbidden" } }),
+          { status: 403 },
+        );
+      }
+
+      if (
+        parsedBody.uris?.[0] === "spotify:track:3fpTMuD1u3gJlVI4FadVHs" ||
+        url.includes("spotify%3Atrack%3A3fpTMuD1u3gJlVI4FadVHs")
+      ) {
+        return new Response(
+          JSON.stringify({ error: { status: 403, message: "Forbidden" } }),
+          { status: 403 },
+        );
+      }
+
+      return new Response(JSON.stringify({ snapshot_id: `ok-${postCallIndex}` }), { status: 201 });
+    });
+
+    const uris = [
+      "spotify:track:6LxSe8YmdPxy095Ux6znaQ",
+      "spotify:track:1C7KSXR2GVxknex6I4ANco",
+      "spotify:track:3fpTMuD1u3gJlVI4FadVHs",
+    ];
+    const result = await addTracksInBatches("token-123", "playlist-abc", uris, 100);
+
+    expect(fetchMock).toHaveBeenCalled();
+    expect(result.tracksAddedCount).toBe(2);
+  });
 });
 
 describe("normalizeTrackUris", () => {

@@ -97,6 +97,10 @@ export async function savePlaylistToSpotify(input: SavePlaylistInput): Promise<S
       trackUris,
       SPOTIFY_TRACKS_BATCH_SIZE,
     );
+    const warning =
+      tracksAddedCount < trackUris.length
+        ? `Added ${tracksAddedCount} of ${trackUris.length} tracks. Some tracks were skipped by Spotify.`
+        : undefined;
 
     return {
       playlistId: playlist.id,
@@ -108,6 +112,7 @@ export async function savePlaylistToSpotify(input: SavePlaylistInput): Promise<S
       snapshotId,
       tracksAddedCount,
       tracksAdded: true,
+      warning,
     };
   } catch (error) {
     const message =
@@ -183,6 +188,15 @@ export async function addTracksInBatches(
         break;
       } catch (error) {
         if (error instanceof SpotifyClientError) {
+          if (error.status === 403 && uris.length > 1) {
+            const fallbackResult = await addTracksIndividually(accessToken, endpoint, uris);
+            if (fallbackResult.addedCount > 0) {
+              addedCount += fallbackResult.addedCount;
+              latestSnapshotId = fallbackResult.snapshotId ?? latestSnapshotId;
+              batchAdded = true;
+              break;
+            }
+          }
           const retriable = error.status === 403 && attempt < 3;
           traceSaveLibrary("spotify_add_tracks_batch_attempt_failed", {
             playlistId,
@@ -220,6 +234,42 @@ export async function addTracksInBatches(
     snapshotId: latestSnapshotId,
     tracksAddedCount: addedCount,
   };
+}
+
+async function addTracksIndividually(
+  accessToken: string,
+  endpoint: string,
+  uris: string[],
+): Promise<{ addedCount: number; snapshotId: string | null }> {
+  let addedCount = 0;
+  let latestSnapshotId: string | null = null;
+
+  traceSaveLibrary("spotify_add_tracks_individual_fallback_start", {
+    endpoint,
+    uriCount: uris.length,
+  });
+
+  for (const uri of uris) {
+    try {
+      const data = await addTrackBatch(accessToken, endpoint, [uri], false);
+      addedCount += 1;
+      latestSnapshotId =
+        typeof data.snapshot_id === "string" ? data.snapshot_id : latestSnapshotId;
+    } catch (error) {
+      if (error instanceof SpotifyClientError) {
+        traceSaveLibrary("spotify_add_tracks_individual_item_failed", {
+          endpoint,
+          uri,
+          status: error.status,
+          bodyExcerpt: summarizeBodyForClient(error.bodyText),
+        });
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  return { addedCount, snapshotId: latestSnapshotId };
 }
 
 async function addTrackBatch(
