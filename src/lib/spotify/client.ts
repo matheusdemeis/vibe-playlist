@@ -64,6 +64,13 @@ export async function spotifyJson<T>(options: SpotifyJsonOptions): Promise<T> {
       endpoint: path,
       status: response.status,
       bodyExcerpt: excerpt(responseBodyText),
+      responseHeaders: {
+        wwwAuthenticate: response.headers.get("www-authenticate"),
+        spotifyRequestId:
+          response.headers.get("spotify-request-id") ??
+          response.headers.get("x-spotify-request-id") ??
+          response.headers.get("x-request-id"),
+      },
       headers: redactHeaders(headers),
     });
     throw new SpotifyClientError({

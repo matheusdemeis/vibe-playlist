@@ -298,20 +298,21 @@ async function createPlaylist(
   input: { name: string; description: string; isPublic: boolean },
 ): Promise<CreatedPlaylist> {
   const finalPublic = input.isPublic === true;
+  const me = await spotifyJson<SpotifyMeResponse>({
+    method: "GET",
+    path: "/me",
+    accessToken,
+  });
 
   const payload = {
     name: input.name,
     description: input.description,
     public: finalPublic,
+    collaborative: false,
   };
   let createdPlaylist: SpotifyCreatePlaylistResponse;
   try {
-    createdPlaylist = await spotifyJson<SpotifyCreatePlaylistResponse>({
-      method: "POST",
-      path: "/me/playlists",
-      accessToken,
-      json: payload,
-    });
+    createdPlaylist = await createPlaylistWithFallback(accessToken, me.id, payload);
   } catch (error) {
     if (error instanceof SpotifyClientError) {
       throw new PlaylistSaveError(
@@ -378,6 +379,38 @@ async function createPlaylist(
     finalPublic: playlistAfterUpdate.public,
     visibilityWarning,
   };
+}
+
+async function createPlaylistWithFallback(
+  accessToken: string,
+  userId: string,
+  payload: { name: string; description: string; public: boolean; collaborative: boolean },
+): Promise<SpotifyCreatePlaylistResponse> {
+  try {
+    return await spotifyJson<SpotifyCreatePlaylistResponse>({
+      method: "POST",
+      path: `/users/${userId}/playlists`,
+      accessToken,
+      json: payload,
+    });
+  } catch (error) {
+    if (!(error instanceof SpotifyClientError) || error.status !== 403) {
+      throw error;
+    }
+
+    traceSaveLibrary("spotify_create_playlist_fallback", {
+      from: `/users/${userId}/playlists`,
+      to: "/me/playlists",
+      status: error.status,
+      bodyExcerpt: summarizeBodyForClient(error.bodyText),
+    });
+    return spotifyJson<SpotifyCreatePlaylistResponse>({
+      method: "POST",
+      path: "/me/playlists",
+      accessToken,
+      json: payload,
+    });
+  }
 }
 
 async function fetchPlaylistVisibility(
