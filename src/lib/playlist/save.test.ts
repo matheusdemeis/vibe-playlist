@@ -19,7 +19,11 @@ describe("addTracksInBatches", () => {
   });
 
   it("posts all URI batches to Spotify", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/me")) {
+        return new Response(JSON.stringify({ id: "user-123" }), { status: 200 });
+      }
       return new Response(JSON.stringify({ snapshot_id: "ok" }), { status: 201 });
     });
 
@@ -34,11 +38,11 @@ describe("addTracksInBatches", () => {
       100,
     );
 
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
 
-    const firstCallArgs = fetchMock.mock.calls[0];
-    const secondCallArgs = fetchMock.mock.calls[1];
-    const thirdCallArgs = fetchMock.mock.calls[2];
+    const firstCallArgs = fetchMock.mock.calls[1];
+    const secondCallArgs = fetchMock.mock.calls[2];
+    const thirdCallArgs = fetchMock.mock.calls[3];
 
     expect(firstCallArgs[0]).toContain("/playlists/playlist-abc/tracks");
     expect(secondCallArgs[0]).toContain("/playlists/playlist-abc/tracks");
@@ -61,9 +65,19 @@ describe("addTracksInBatches", () => {
   });
 
   it("throws with spotify status when add-tracks request fails", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ error: { status: 403, message: "Forbidden" } }), { status: 403 }),
-    );
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/me")) {
+        return new Response(JSON.stringify({ id: "user-123" }), { status: 200 });
+      }
+      if (url.includes("/playlists/playlist-abc") && !url.endsWith("/tracks")) {
+        return new Response(
+          JSON.stringify({ owner: { id: "user-123" }, collaborative: false, public: false }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify({ error: { status: 403, message: "Forbidden" } }), { status: 403 });
+    });
 
     await expect(
       addTracksInBatches("token-123", "playlist-abc", ["spotify:track:4iV5W9uYEdYUVa79Axb7Rh"], 100),
@@ -71,6 +85,7 @@ describe("addTracksInBatches", () => {
       status: 403,
       code: "spotify_add_tracks_failed",
     });
+    expect(fetchMock).toHaveBeenCalled();
   });
 });
 

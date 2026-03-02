@@ -14,6 +14,16 @@ type SpotifyCreatePlaylistResponse = {
   };
 };
 
+type SpotifyMeResponse = {
+  id: string;
+};
+
+type SpotifyPlaylistMetaResponse = {
+  owner?: { id?: string };
+  collaborative?: boolean;
+  public?: boolean | null;
+};
+
 type SavePlaylistInput = {
   accessToken: string;
   grantedScopes: string[];
@@ -120,19 +130,48 @@ export async function addTracksInBatches(
   let latestSnapshotId: string | null = null;
   let addedCount = 0;
   const endpoint = `/playlists/${playlistId}/tracks`;
+  const me = await getCurrentSpotifyUser(accessToken);
   for (const uris of batches) {
-    try {
-      const data = await spotifyJson<{ snapshot_id?: string }>({
-        method: "POST",
-        path: endpoint,
-        accessToken,
-        json: { uris },
-      });
-      addedCount += uris.length;
-      latestSnapshotId =
-        typeof data.snapshot_id === "string" ? data.snapshot_id : latestSnapshotId;
-    } catch (error) {
-      if (error instanceof SpotifyClientError) {
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        const data = await spotifyJson<{ snapshot_id?: string }>({
+          method: "POST",
+          path: endpoint,
+          accessToken,
+          json: { uris },
+        });
+        addedCount += uris.length;
+        latestSnapshotId =
+          typeof data.snapshot_id === "string" ? data.snapshot_id : latestSnapshotId;
+        break;
+      } catch (error) {
+        if (!(error instanceof SpotifyClientError)) {
+          throw error;
+        }
+
+        if (error.status === 403) {
+          await logPlaylistOwnershipForForbidden(accessToken, playlistId, me.id);
+          throw new PlaylistSaveError(
+            formatSpotifyApiErrorMessage(error.status, error.bodyText, error.responseHeaders),
+            error.status,
+            "spotify_add_tracks_failed",
+            { endpoint, body: error.bodyText, extra: { tracksAddedCount: addedCount } },
+          );
+        }
+
+        const retriable =
+          (error.status === 429 || (error.status >= 500 && error.status <= 599)) &&
+          attempt < 3;
+        if (retriable) {
+          traceSaveLibrary("spotify_add_tracks_retry", {
+            playlistId,
+            status: error.status,
+            attempt,
+          });
+          await wait(300 * attempt);
+          continue;
+        }
+
         throw new PlaylistSaveError(
           formatSpotifyApiErrorMessage(error.status, error.bodyText, error.responseHeaders),
           error.status,
@@ -140,7 +179,6 @@ export async function addTracksInBatches(
           { endpoint, body: error.bodyText, extra: { tracksAddedCount: addedCount } },
         );
       }
-      throw error;
     }
   }
 
@@ -148,6 +186,58 @@ export async function addTracksInBatches(
     snapshotId: latestSnapshotId,
     tracksAddedCount: addedCount,
   };
+}
+
+async function getCurrentSpotifyUser(accessToken: string): Promise<SpotifyMeResponse> {
+  try {
+    return await spotifyJson<SpotifyMeResponse>({
+      method: "GET",
+      path: "/me",
+      accessToken,
+    });
+  } catch (error) {
+    if (error instanceof SpotifyClientError) {
+      throw new PlaylistSaveError(
+        "Spotify user token is invalid for track operations. Reconnect Spotify.",
+        error.status,
+        "spotify_me_failed",
+        { endpoint: error.path, body: error.bodyText },
+      );
+    }
+    throw error;
+  }
+}
+
+async function logPlaylistOwnershipForForbidden(
+  accessToken: string,
+  playlistId: string,
+  meId: string,
+): Promise<void> {
+  try {
+    const playlist = await spotifyJson<SpotifyPlaylistMetaResponse>({
+      method: "GET",
+      path: `/playlists/${playlistId}`,
+      accessToken,
+    });
+    traceSaveLibrary("spotify_add_tracks_forbidden_context", {
+      meId,
+      playlistId,
+      playlistOwnerId: playlist.owner?.id ?? null,
+      ownerMatchesMe: playlist.owner?.id === meId,
+      collaborative: playlist.collaborative ?? null,
+      public: playlist.public ?? null,
+    });
+  } catch (error) {
+    if (error instanceof SpotifyClientError) {
+      traceSaveLibrary("spotify_add_tracks_forbidden_context_failed", {
+        playlistId,
+        status: error.status,
+        endpoint: error.path,
+      });
+      return;
+    }
+    throw error;
+  }
 }
 
 export function chunkTrackUris(trackUris: string[], batchSize = SPOTIFY_TRACKS_BATCH_SIZE): string[][] {
@@ -284,4 +374,10 @@ function traceSaveLibrary(event: string, payload: Record<string, unknown>): void
   }
 
   console.log(`[TRACE][save-lib] ${event}`, payload);
+}
+
+async function wait(ms: number): Promise<void> {
+  await new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
