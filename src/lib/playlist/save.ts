@@ -14,19 +14,6 @@ type SpotifyCreatePlaylistResponse = {
   };
 };
 
-type SpotifyMeResponse = {
-  id: string;
-  display_name?: string | null;
-};
-
-type SpotifyPlaylistResponse = {
-  owner: {
-    id: string;
-  };
-  collaborative: boolean;
-  public: boolean | null;
-};
-
 type SavePlaylistInput = {
   accessToken: string;
   grantedScopes: string[];
@@ -41,7 +28,6 @@ type CreatedPlaylist = {
   url: string;
   requestedPublic: boolean;
   finalPublic: boolean | null;
-  visibilityWarning?: string;
 };
 
 export type SavePlaylistResult = {
@@ -109,7 +95,6 @@ export async function savePlaylistToSpotify(input: SavePlaylistInput): Promise<S
       sharedAccessToken,
       playlist.id,
       trackUris,
-      playlist.requestedPublic,
       SPOTIFY_TRACKS_BATCH_SIZE,
     );
 
@@ -123,7 +108,6 @@ export async function savePlaylistToSpotify(input: SavePlaylistInput): Promise<S
       snapshotId,
       tracksAddedCount,
       tracksAdded: true,
-      warning: playlist.visibilityWarning,
     };
   } catch (error) {
     const message =
@@ -147,7 +131,6 @@ export async function savePlaylistToSpotify(input: SavePlaylistInput): Promise<S
       snapshotId: null,
       tracksAddedCount: partialTracksAddedCount,
       tracksAdded: false,
-      warning: playlist.visibilityWarning,
       error: {
         message,
         status,
@@ -165,7 +148,6 @@ export async function addTracksInBatches(
   accessToken: string,
   playlistId: string,
   trackUris: string[],
-  requestedPublic?: boolean,
   batchSize = SPOTIFY_TRACKS_BATCH_SIZE,
 ): Promise<{ snapshotId: string | null; tracksAddedCount: number }> {
   const validatedTrackUris = validateTrackUris(trackUris);
@@ -184,57 +166,6 @@ export async function addTracksInBatches(
   let latestSnapshotId: string | null = null;
   let addedCount = 0;
   const endpoint = `/playlists/${playlistId}/tracks`;
-  let me: SpotifyMeResponse;
-  let playlist: SpotifyPlaylistResponse;
-  try {
-    me = await spotifyJson<SpotifyMeResponse>({
-      method: "GET",
-      path: "/me",
-      accessToken,
-    });
-    playlist = await spotifyJson<SpotifyPlaylistResponse>({
-      method: "GET",
-      path: `/playlists/${playlistId}`,
-      accessToken,
-    });
-  } catch (error) {
-    if (error instanceof SpotifyClientError) {
-      throw new PlaylistSaveError(
-        formatSpotifyApiErrorMessage(error.status, error.bodyText, error.responseHeaders),
-        error.status,
-        "spotify_add_tracks_failed",
-        { endpoint: error.path, body: error.bodyText },
-      );
-    }
-    throw error;
-  }
-
-  traceSaveLibrary("spotify_add_tracks_identity_check", {
-    meId: me.id,
-    meDisplayName: me.display_name ?? null,
-    playlistOwnerId: playlist.owner.id,
-    playlistCollaborative: playlist.collaborative,
-    playlistPublic: playlist.public,
-    ownerMatchesMe: playlist.owner.id === me.id,
-  });
-  if (playlist.owner.id !== me.id) {
-    throw new PlaylistSaveError(
-      "Connected Spotify account does not own this playlist. Reconnect and try again.",
-      403,
-      "playlist_owner_mismatch",
-      { endpoint: `/playlists/${playlistId}` },
-    );
-  }
-  if (requestedPublic === false && playlist.public === true) {
-    const visibilityResult = await enforcePlaylistVisibility(accessToken, playlistId, false);
-    traceSaveLibrary("spotify_add_tracks_private_reenforce", {
-      playlistId,
-      requestedPublic,
-      beforePublic: playlist.public,
-      afterPublic: visibilityResult.finalPublic,
-      warning: visibilityResult.warning,
-    });
-  }
   for (const uris of batches) {
     let batchAdded = false;
     for (let attempt = 1; attempt <= 3; attempt += 1) {
@@ -310,43 +241,36 @@ async function createPlaylist(
   input: { name: string; description: string; isPublic: boolean },
 ): Promise<CreatedPlaylist> {
   const finalPublic = input.isPublic === true;
-  const me = await spotifyJson<SpotifyMeResponse>({
-    method: "GET",
-    path: "/me",
-    accessToken,
-  });
-
   const payload = {
     name: input.name,
     description: input.description,
     public: finalPublic,
-    collaborative: false,
   };
   let createdPlaylist: SpotifyCreatePlaylistResponse;
   try {
-    createdPlaylist = await createPlaylistWithFallback(accessToken, me.id, payload);
+    createdPlaylist = await spotifyJson<SpotifyCreatePlaylistResponse>({
+      method: "POST",
+      path: "/me/playlists",
+      accessToken,
+      json: payload,
+    });
   } catch (error) {
     if (error instanceof SpotifyClientError) {
       throw new PlaylistSaveError(
         formatSpotifyApiErrorMessage(error.status, error.bodyText, error.responseHeaders),
         error.status,
         "spotify_save_failed",
-        { endpoint: "/me/playlists", body: error.bodyText },
+        { endpoint: error.path, body: error.bodyText },
       );
     }
     throw error;
   }
-  const createdPlaylistMeta = await spotifyJson<SpotifyPlaylistResponse>({
-    method: "GET",
-    path: `/playlists/${createdPlaylist.id}`,
-    accessToken,
-  });
   traceSaveLibrary("spotify_create_playlist_response_meta", {
     playlistId: createdPlaylist.id,
     requestedPublic: finalPublic,
-    playlistPublic: createdPlaylistMeta.public,
-    playlistOwnerId: createdPlaylistMeta.owner.id,
-    playlistCollaborative: createdPlaylistMeta.collaborative,
+    playlistPublic: createdPlaylist.public ?? null,
+    playlistOwnerId: createdPlaylist.owner?.id ?? null,
+    playlistCollaborative: createdPlaylist.collaborative ?? null,
   });
   traceSaveLibrary("spotify_create_playlist_raw_public", {
     source: "create_response",
@@ -361,133 +285,11 @@ async function createPlaylist(
       external_urls: createdPlaylist.external_urls ?? null,
     },
   });
-  traceSaveLibrary("spotify_create_playlist_raw_public", {
-    source: "fetch_response",
-    playlistId: createdPlaylist.id,
-    publicValue: createdPlaylistMeta.public,
-    publicType: typeof createdPlaylistMeta.public,
-    pick: {
-      id: createdPlaylist.id,
-      public: createdPlaylistMeta.public,
-      collaborative: createdPlaylistMeta.collaborative,
-      owner: { id: createdPlaylistMeta.owner.id },
-      external_urls: createdPlaylist.external_urls ?? null,
-    },
-  });
-  const { finalPublic: enforcedPublic, warning: visibilityWarning } =
-    await enforcePlaylistVisibility(accessToken, createdPlaylist.id, finalPublic);
-  const playlistAfterUpdate = await fetchPlaylistVisibility(accessToken, createdPlaylist.id);
-  traceSaveLibrary("spotify_playlist_visibility_after_put", {
-    playlistId: createdPlaylist.id,
-    requestedPublic: finalPublic,
-    finalPublic: playlistAfterUpdate.public,
-    finalPublicAfterEnforce: enforcedPublic,
-  });
-
   return {
     id: createdPlaylist.id,
     url: createdPlaylist.external_urls.spotify,
     requestedPublic: finalPublic,
-    finalPublic: playlistAfterUpdate.public,
-    visibilityWarning,
-  };
-}
-
-async function createPlaylistWithFallback(
-  accessToken: string,
-  userId: string,
-  payload: { name: string; description: string; public: boolean; collaborative: boolean },
-): Promise<SpotifyCreatePlaylistResponse> {
-  try {
-    return await spotifyJson<SpotifyCreatePlaylistResponse>({
-      method: "POST",
-      path: `/users/${userId}/playlists`,
-      accessToken,
-      json: payload,
-    });
-  } catch (error) {
-    if (!(error instanceof SpotifyClientError) || error.status !== 403) {
-      throw error;
-    }
-
-    traceSaveLibrary("spotify_create_playlist_fallback", {
-      from: `/users/${userId}/playlists`,
-      to: "/me/playlists",
-      status: error.status,
-      bodyExcerpt: summarizeBodyForClient(error.bodyText),
-    });
-    return spotifyJson<SpotifyCreatePlaylistResponse>({
-      method: "POST",
-      path: "/me/playlists",
-      accessToken,
-      json: payload,
-    });
-  }
-}
-
-async function fetchPlaylistVisibility(
-  accessToken: string,
-  playlistId: string,
-): Promise<SpotifyPlaylistResponse> {
-  return spotifyJson<SpotifyPlaylistResponse>({
-    method: "GET",
-    path: `/playlists/${playlistId}`,
-    accessToken,
-  });
-}
-
-async function enforcePlaylistVisibility(
-  accessToken: string,
-  playlistId: string,
-  requestedPublic: boolean,
-): Promise<{ finalPublic: boolean | null; warning?: string }> {
-  const changePayload = { public: requestedPublic, collaborative: false };
-  let observedPublic: boolean | null = null;
-  for (let attempt = 1; attempt <= 4; attempt += 1) {
-    traceSaveLibrary("spotify_change_playlist_visibility", {
-      method: "PUT",
-      path: `/playlists/${playlistId}`,
-      attempt,
-      bodyPreview: JSON.stringify(changePayload).slice(0, 200),
-    });
-    try {
-      await spotifyJson({
-        method: "PUT",
-        path: `/playlists/${playlistId}`,
-        accessToken,
-        json: changePayload,
-      });
-    } catch (error) {
-      if (error instanceof SpotifyClientError) {
-        return {
-          finalPublic: null,
-          warning: formatSpotifyApiErrorMessage(
-            error.status,
-            error.bodyText,
-            error.responseHeaders,
-          ),
-        };
-      }
-      throw error;
-    }
-
-    const visibility = await fetchPlaylistVisibility(accessToken, playlistId);
-    observedPublic = visibility.public;
-    traceSaveLibrary("spotify_change_playlist_visibility_check", {
-      playlistId,
-      attempt,
-      requestedPublic,
-      observedPublic,
-    });
-    if (observedPublic === requestedPublic) {
-      return { finalPublic: observedPublic };
-    }
-    await wait(250 * attempt);
-  }
-
-  return {
-    finalPublic: observedPublic,
-    warning: `Visibility check mismatch after retries (requested: ${String(requestedPublic)}, observed: ${String(observedPublic)}).`,
+    finalPublic: createdPlaylist.public ?? finalPublic,
   };
 }
 
