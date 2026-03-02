@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 const DEV_LOCALHOST_HOST = "localhost:5000";
 const DEV_CANONICAL_ORIGIN = "http://127.0.0.1:5000";
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   if (process.env.NODE_ENV === "production") {
     return NextResponse.next();
   }
