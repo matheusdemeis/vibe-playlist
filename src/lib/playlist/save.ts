@@ -40,16 +40,22 @@ type SavePlaylistInput = {
 type CreatedPlaylist = {
   id: string;
   url: string;
-  visibility: "public" | "private" | "unknown";
+  requestedPublic: boolean;
+  finalPublic: boolean | null;
+  visibilityWarning?: string;
 };
 
 export type SavePlaylistResult = {
   playlistId: string;
   playlistUrl: string;
-  playlistVisibility: "public" | "private" | "unknown";
+  visibility: {
+    requested: boolean;
+    final: boolean | null;
+  };
   snapshotId: string | null;
   tracksAddedCount: number;
   tracksAdded: boolean;
+  warning?: string;
   error?: {
     message: string;
     status: number;
@@ -111,10 +117,14 @@ export async function savePlaylistToSpotify(input: SavePlaylistInput): Promise<S
     return {
       playlistId: playlist.id,
       playlistUrl: playlist.url,
-      playlistVisibility: playlist.visibility,
+      visibility: {
+        requested: playlist.requestedPublic,
+        final: playlist.finalPublic,
+      },
       snapshotId,
       tracksAddedCount,
       tracksAdded: true,
+      warning: playlist.visibilityWarning,
     };
   } catch (error) {
     const message =
@@ -126,10 +136,14 @@ export async function savePlaylistToSpotify(input: SavePlaylistInput): Promise<S
     return {
       playlistId: playlist.id,
       playlistUrl: playlist.url,
-      playlistVisibility: playlist.visibility,
+      visibility: {
+        requested: playlist.requestedPublic,
+        final: playlist.finalPublic,
+      },
       snapshotId: null,
       tracksAddedCount: 0,
       tracksAdded: false,
+      warning: playlist.visibilityWarning,
       error: {
         message,
         status,
@@ -371,30 +385,53 @@ async function createPlaylist(
       external_urls: createdPlaylist.external_urls ?? null,
     },
   });
-  if (finalPublic === false && createdPlaylistMeta.public === true) {
-    throw new PlaylistSaveError(
-      `Spotify created playlist with unexpected visibility (requested public=${String(finalPublic)}, actual public=${String(createdPlaylistMeta.public)}).`,
-      422,
-      "spotify_playlist_visibility_mismatch",
-      {
-        endpoint: `/playlists/${createdPlaylist.id}`,
-        extra: {
-          requestedPublic: finalPublic,
-          actualPublic: createdPlaylistMeta.public,
-        },
-      },
-    );
+  let visibilityWarning: string | undefined;
+  try {
+    const changePayload = { public: finalPublic };
+    traceSaveLibrary("spotify_change_playlist_visibility", {
+      method: "PUT",
+      path: `/playlists/${createdPlaylist.id}`,
+      bodyPreview: JSON.stringify(changePayload).slice(0, 200),
+    });
+    await spotifyJson({
+      method: "PUT",
+      path: `/playlists/${createdPlaylist.id}`,
+      accessToken,
+      json: changePayload,
+    });
+  } catch (error) {
+    if (error instanceof SpotifyClientError) {
+      visibilityWarning = formatSpotifyApiErrorMessage(
+        error.status,
+        error.bodyText,
+        error.responseHeaders,
+      );
+      traceSaveLibrary("spotify_change_playlist_visibility_failed", {
+        playlistId: createdPlaylist.id,
+        status: error.status,
+        message: visibilityWarning,
+      });
+    } else {
+      throw error;
+    }
   }
+  const playlistAfterUpdate = await spotifyJson<SpotifyPlaylistResponse>({
+    method: "GET",
+    path: `/playlists/${createdPlaylist.id}`,
+    accessToken,
+  });
+  traceSaveLibrary("spotify_playlist_visibility_after_put", {
+    playlistId: createdPlaylist.id,
+    requestedPublic: finalPublic,
+    finalPublic: playlistAfterUpdate.public,
+  });
 
   return {
     id: createdPlaylist.id,
     url: createdPlaylist.external_urls.spotify,
-    visibility:
-      createdPlaylistMeta.public === null
-        ? "unknown"
-        : createdPlaylistMeta.public
-          ? "public"
-          : "private",
+    requestedPublic: finalPublic,
+    finalPublic: playlistAfterUpdate.public,
+    visibilityWarning,
   };
 }
 
