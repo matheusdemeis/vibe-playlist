@@ -51,7 +51,7 @@ export class PlaylistSaveError extends Error {
 }
 
 export async function savePlaylistToSpotify(input: SavePlaylistInput): Promise<SavePlaylistResult> {
-  const trackUris = normalizeTrackUris(input.trackUris);
+  const trackUris = buildTrackUris(input.trackUris);
   if (trackUris.length === 0) {
     throw new PlaylistSaveError(
       "At least one valid Spotify track URI is required.",
@@ -101,7 +101,19 @@ export async function addTracksInBatches(
   trackUris: string[],
   batchSize = SPOTIFY_TRACKS_BATCH_SIZE,
 ): Promise<string | null> {
-  const batches = chunkTrackUris(trackUris, Math.min(100, Math.max(1, Math.trunc(batchSize))));
+  const validatedTrackUris = buildTrackUris(trackUris);
+  if (validatedTrackUris.length === 0) {
+    throw new PlaylistSaveError(
+      "At least one valid Spotify track URI is required.",
+      400,
+      "missing_tracks",
+      { endpoint: `/playlists/${playlistId}/tracks`, body: '{"uris":[]}' },
+    );
+  }
+  const batches = chunkTrackUris(
+    validatedTrackUris,
+    Math.min(100, Math.max(1, Math.trunc(batchSize))),
+  );
   let latestSnapshotId: string | null = null;
   const endpoint = `/playlists/${playlistId}/tracks`;
   const fullUrl = `${SPOTIFY_API_BASE_URL}${endpoint}`;
@@ -145,9 +157,11 @@ export async function addTracksInBatches(
     }
 
     latestSnapshotId =
-      typeof parsedBody === "object" && parsedBody !== null && "snapshot_id" in parsedBody
-        ? String((parsedBody as { snapshot_id?: string }).snapshot_id ?? "")
-        : null;
+      typeof parsedBody === "object" &&
+      parsedBody !== null &&
+      typeof (parsedBody as { snapshot_id?: unknown }).snapshot_id === "string"
+        ? (parsedBody as { snapshot_id: string }).snapshot_id
+        : latestSnapshotId;
   }
 
   return latestSnapshotId;
@@ -214,12 +228,12 @@ async function spotifyRequest<T>(
   return (await response.json()) as T;
 }
 
-export function normalizeTrackUris(trackUris: string[]): string[] {
-  const normalized = trackUris
+export function buildTrackUris(trackIdentifiers: string[]): string[] {
+  const normalized = trackIdentifiers
     .map((value) => value.trim())
     .filter(Boolean)
     .map((value) => {
-      if (value.startsWith("spotify:track:")) {
+      if (/^spotify:track:[A-Za-z0-9]{22}$/.test(value)) {
         return value;
       }
 
@@ -233,6 +247,8 @@ export function normalizeTrackUris(trackUris: string[]): string[] {
 
   return Array.from(new Set(normalized));
 }
+
+export const normalizeTrackUris = buildTrackUris;
 
 function traceSaveLibrary(event: string, payload: Record<string, unknown>): void {
   if (process.env.NODE_ENV === "production") {
