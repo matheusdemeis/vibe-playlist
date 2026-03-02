@@ -182,12 +182,14 @@ export default function Home() {
         </a>
         <div className="flex w-full flex-col gap-3">
           <input
+            aria-label="Search query"
             className="w-full rounded-lg border border-zinc-300 px-4 py-3 text-zinc-900 outline-none focus:border-zinc-500"
             placeholder="Enter artist or track (e.g. Drake)"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />
           <input
+            aria-label="Track limit"
             className="w-full rounded-lg border border-zinc-300 px-4 py-3 text-zinc-900 outline-none focus:border-zinc-500"
             type="number"
             min={1}
@@ -212,7 +214,7 @@ export default function Home() {
             <button
               type="button"
               onClick={handleOpenSaveModal}
-              className="mt-3 rounded-full bg-zinc-900 px-4 py-2 text-xs font-medium text-white hover:bg-zinc-700"
+              className="mt-3 rounded-full bg-zinc-900 px-4 py-2 text-xs font-medium text-white hover:bg-zinc-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-500"
             >
               Save to Spotify
             </button>
@@ -221,11 +223,14 @@ export default function Home() {
         {saveStatus === "success" && savedPlaylist ? (
           <div className="w-full rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-left text-sm text-emerald-800">
             <p className="font-medium">{playlistName.trim() || "Playlist"} saved to Spotify.</p>
+            {savedPlaylist.snapshotId ? (
+              <p className="mt-1 text-xs text-emerald-700">Snapshot ID: {savedPlaylist.snapshotId}</p>
+            ) : null}
             <a
               href={savedPlaylist.playlistUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="mt-2 inline-flex rounded-full bg-emerald-700 px-4 py-2 text-xs font-medium text-white hover:bg-emerald-600"
+              className="mt-2 inline-flex rounded-full bg-emerald-700 px-4 py-2 text-xs font-medium text-white hover:bg-emerald-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600"
             >
               Open in Spotify
             </a>
@@ -264,14 +269,17 @@ export default function Home() {
         <div
           role="dialog"
           aria-modal="true"
-          aria-label="Save playlist to Spotify"
+          aria-labelledby="save-modal-title"
+          aria-describedby="save-modal-description"
           className="fixed inset-0 z-30 flex items-end justify-center bg-black/30 p-4 sm:items-center"
         >
           <div className="w-full max-w-lg space-y-4 rounded-2xl bg-white p-5 shadow-xl sm:p-6">
             <div className="space-y-1">
-              <h2 className="text-lg font-semibold text-zinc-900">Save to Spotify</h2>
-              <p className="text-sm text-zinc-600">
-                Review playlist details before saving.
+              <h2 id="save-modal-title" className="text-lg font-semibold text-zinc-900">
+                Save to Spotify
+              </h2>
+              <p id="save-modal-description" className="text-sm text-zinc-600">
+                Review playlist details and create a playlist in your account.
               </p>
             </div>
 
@@ -283,7 +291,7 @@ export default function Home() {
                 id="playlist-name"
                 value={playlistName}
                 onChange={(event) => setPlaylistName(event.target.value)}
-                className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm text-zinc-900"
+                className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-500"
               />
             </div>
 
@@ -296,7 +304,7 @@ export default function Home() {
                 value={playlistDescription}
                 onChange={(event) => setPlaylistDescription(event.target.value)}
                 rows={3}
-                className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm text-zinc-900"
+                className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-500"
               />
             </div>
 
