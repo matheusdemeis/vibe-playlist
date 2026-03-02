@@ -371,11 +371,7 @@ async function createPlaylist(
       external_urls: createdPlaylist.external_urls ?? null,
     },
   });
-  if (
-    createdPlaylistMeta.public !== null &&
-    typeof createdPlaylistMeta.public === "boolean" &&
-    createdPlaylistMeta.public !== finalPublic
-  ) {
+  if (finalPublic === false && createdPlaylistMeta.public === true) {
     throw new PlaylistSaveError(
       `Spotify created playlist with unexpected visibility (requested public=${String(finalPublic)}, actual public=${String(createdPlaylistMeta.public)}).`,
       422,
