@@ -93,6 +93,28 @@ describe("addTracksInBatches", () => {
     expect(result.snapshotId).toBe("fallback-ok");
     expect(result.tracksAddedCount).toBe(2);
   });
+
+  it("falls back to PUT replace when both POST variants return 403", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      const method = init?.method ?? "GET";
+      if (method === "PUT") {
+        return new Response(JSON.stringify({ snapshot_id: "replace-ok" }), { status: 201 });
+      }
+
+      return new Response(
+        JSON.stringify({ error: { status: 403, message: "Forbidden" } }),
+        { status: 403 },
+      );
+    });
+
+    const uris = ["spotify:track:4iV5W9uYEdYUVa79Axb7Rh"];
+    const result = await addTracksInBatches("token-123", "playlist-abc", uris, 100);
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect((fetchMock.mock.calls[2][1]?.method ?? "GET").toUpperCase()).toBe("PUT");
+    expect(result.snapshotId).toBe("replace-ok");
+    expect(result.tracksAddedCount).toBe(1);
+  });
 });
 
 describe("normalizeTrackUris", () => {

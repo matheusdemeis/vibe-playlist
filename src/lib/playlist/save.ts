@@ -170,7 +170,12 @@ export async function addTracksInBatches(
     let batchAdded = false;
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       try {
-        const data = await addTrackBatch(accessToken, endpoint, uris);
+        const data = await addTrackBatch(
+          accessToken,
+          endpoint,
+          uris,
+          addedCount === 0,
+        );
         addedCount += uris.length;
         latestSnapshotId =
           typeof data.snapshot_id === "string" ? data.snapshot_id : latestSnapshotId;
@@ -221,6 +226,7 @@ async function addTrackBatch(
   accessToken: string,
   endpoint: string,
   uris: string[],
+  allowReplaceFallback: boolean,
 ): Promise<{ snapshot_id?: string }> {
   try {
     return await spotifyJson<{ snapshot_id?: string }>({
@@ -241,13 +247,33 @@ async function addTrackBatch(
       originalStatus: error.status,
       originalBodyExcerpt: summarizeBodyForClient(error.bodyText),
     });
+    try {
+      return await spotifyJson<{ snapshot_id?: string }>({
+        method: "POST",
+        path: endpoint,
+        accessToken,
+        query: { uris: uris.join(",") },
+      });
+    } catch (fallbackError) {
+      if (!(fallbackError instanceof SpotifyClientError) || !allowReplaceFallback) {
+        throw fallbackError;
+      }
 
-    return spotifyJson<{ snapshot_id?: string }>({
-      method: "POST",
-      path: endpoint,
-      accessToken,
-      query: { uris: uris.join(",") },
-    });
+      traceSaveLibrary("spotify_add_tracks_replace_fallback", {
+        endpoint,
+        uriCount: uris.length,
+        firstThreeUris: uris.slice(0, 3),
+        originalStatus: fallbackError.status,
+        originalBodyExcerpt: summarizeBodyForClient(fallbackError.bodyText),
+      });
+
+      return spotifyJson<{ snapshot_id?: string }>({
+        method: "PUT",
+        path: endpoint,
+        accessToken,
+        json: { uris },
+      });
+    }
   }
 }
 
