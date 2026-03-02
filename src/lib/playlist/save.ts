@@ -5,6 +5,11 @@ export const SPOTIFY_TRACKS_BATCH_SIZE = 100;
 
 type SpotifyCreatePlaylistResponse = {
   id: string;
+  public?: boolean | null;
+  collaborative?: boolean;
+  owner?: {
+    id?: string;
+  };
   external_urls: {
     spotify: string;
   };
@@ -326,6 +331,32 @@ async function createPlaylist(
     playlistPublic: createdPlaylistMeta.public,
     playlistOwnerId: createdPlaylistMeta.owner.id,
     playlistCollaborative: createdPlaylistMeta.collaborative,
+  });
+  traceSaveLibrary("spotify_create_playlist_raw_public", {
+    source: "create_response",
+    playlistId: createdPlaylist.id,
+    publicValue: createdPlaylist.public ?? null,
+    publicType: typeof createdPlaylist.public,
+    pick: {
+      id: createdPlaylist.id,
+      public: createdPlaylist.public ?? null,
+      collaborative: createdPlaylist.collaborative ?? null,
+      owner: { id: createdPlaylist.owner?.id ?? null },
+      external_urls: createdPlaylist.external_urls ?? null,
+    },
+  });
+  traceSaveLibrary("spotify_create_playlist_raw_public", {
+    source: "fetch_response",
+    playlistId: createdPlaylist.id,
+    publicValue: createdPlaylistMeta.public,
+    publicType: typeof createdPlaylistMeta.public,
+    pick: {
+      id: createdPlaylist.id,
+      public: createdPlaylistMeta.public,
+      collaborative: createdPlaylistMeta.collaborative,
+      owner: { id: createdPlaylistMeta.owner.id },
+      external_urls: createdPlaylist.external_urls ?? null,
+    },
   });
   if ((createdPlaylistMeta.public === true) !== finalPublic) {
     throw new PlaylistSaveError(
