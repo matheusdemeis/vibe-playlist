@@ -105,13 +105,17 @@ export async function POST(request: NextRequest) {
   const limit = parsed.value.limit;
 
   try {
-    const trackSearchParams = new URLSearchParams({
-      q: query,
-      type: "track",
-      limit: String(limit),
+    const trackSearchParams = new URLSearchParams();
+    trackSearchParams.set("q", query);
+    trackSearchParams.set("type", "track");
+    trackSearchParams.set("limit", String(limit));
+    const finalQueryString = trackSearchParams.toString();
+    traceGenerate("spotify_search_query", {
+      normalizedLimit: limit,
+      queryString: finalQueryString,
     });
     const trackSearch = await spotifyRequest<SpotifyTrackSearchResponse>(
-      `/search?${trackSearchParams.toString()}`,
+      `/search?${finalQueryString}`,
       accessToken,
     );
     if (!trackSearch.ok) {
@@ -136,14 +140,13 @@ export async function POST(request: NextRequest) {
   }
 }
 
-function resolveLimit(value: number | string | undefined): number {
-  const parsed = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(parsed)) {
+function resolveLimit(value: unknown): number {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  if (Number.isNaN(parsed)) {
     return DEFAULT_TRACK_SEARCH_LIMIT;
   }
 
-  const integer = Math.trunc(parsed);
-  return Math.min(50, Math.max(1, integer));
+  return Math.min(50, Math.max(1, parsed));
 }
 
 function parseGenerateRequest(body: GenerateRequestBody):
@@ -162,7 +165,7 @@ function parseGenerateRequest(body: GenerateRequestBody):
     ok: true,
     value: {
       query,
-      limit: resolveLimit(body.limit as number | string | undefined),
+      limit: resolveLimit(body.limit),
     },
   };
 }
