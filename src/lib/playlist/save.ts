@@ -14,6 +14,17 @@ type SpotifyCreatePlaylistResponse = {
   };
 };
 
+type SpotifyMeProfileResponse = {
+  explicit_content?: {
+    filter_enabled?: boolean;
+    filter_locked?: boolean;
+  };
+};
+
+type SpotifyTracksResponse = {
+  tracks: Array<{ id: string; explicit: boolean } | null>;
+};
+
 type SavePlaylistInput = {
   accessToken: string;
   grantedScopes: string[];
@@ -89,18 +100,40 @@ export async function savePlaylistToSpotify(input: SavePlaylistInput): Promise<S
     description: input.description,
     isPublic: input.isPublic,
   });
+  const { playableUris, restrictionWarning } = await filterUrisByAccountRestrictions(
+    sharedAccessToken,
+    trackUris,
+  );
+  if (playableUris.length === 0) {
+    return {
+      playlistId: playlist.id,
+      playlistUrl: playlist.url,
+      visibility: {
+        requested: playlist.requestedPublic,
+        final: playlist.finalPublic,
+      },
+      snapshotId: null,
+      tracksAddedCount: 0,
+      tracksAdded: false,
+      warning: restrictionWarning,
+      error: {
+        message: "Spotify account restrictions blocked all generated tracks.",
+        status: 403,
+      },
+    };
+  }
 
   try {
     const { snapshotId, tracksAddedCount } = await addTracksInBatches(
       sharedAccessToken,
       playlist.id,
-      trackUris,
+      playableUris,
       SPOTIFY_TRACKS_BATCH_SIZE,
     );
     const warning =
-      tracksAddedCount < trackUris.length
-        ? `Added ${tracksAddedCount} of ${trackUris.length} tracks. Some tracks were skipped by Spotify.`
-        : undefined;
+      tracksAddedCount < playableUris.length
+        ? `Added ${tracksAddedCount} of ${playableUris.length} tracks. Some tracks were skipped by Spotify.`
+        : restrictionWarning;
 
     return {
       playlistId: playlist.id,
@@ -395,6 +428,85 @@ async function createPlaylist(
     requestedPublic: finalPublic,
     finalPublic: createdPlaylist.public ?? finalPublic,
   };
+}
+
+async function filterUrisByAccountRestrictions(
+  accessToken: string,
+  trackUris: string[],
+): Promise<{ playableUris: string[]; restrictionWarning?: string }> {
+  try {
+    const me = await spotifyJson<SpotifyMeProfileResponse>({
+      method: "GET",
+      path: "/me",
+      accessToken,
+    });
+    const explicitFilterEnabled = me.explicit_content?.filter_enabled === true;
+    if (!explicitFilterEnabled) {
+      return { playableUris: trackUris };
+    }
+
+    const explicitMap = await fetchTrackExplicitMap(accessToken, trackUris);
+    const playableUris = trackUris.filter((uri) => {
+      const trackId = extractTrackIdFromUri(uri);
+      if (!trackId) {
+        return true;
+      }
+      return explicitMap.get(trackId) !== true;
+    });
+    const skippedCount = trackUris.length - playableUris.length;
+    traceSaveLibrary("spotify_explicit_filter_applied", {
+      inputCount: trackUris.length,
+      playableCount: playableUris.length,
+      skippedCount,
+    });
+    return {
+      playableUris,
+      restrictionWarning:
+        skippedCount > 0
+          ? `Skipped ${skippedCount} explicit tracks due to Spotify account content settings.`
+          : undefined,
+    };
+  } catch (error) {
+    if (error instanceof SpotifyClientError) {
+      traceSaveLibrary("spotify_explicit_filter_check_failed", {
+        status: error.status,
+        bodyExcerpt: summarizeBodyForClient(error.bodyText),
+      });
+      return { playableUris: trackUris };
+    }
+    throw error;
+  }
+}
+
+async function fetchTrackExplicitMap(
+  accessToken: string,
+  trackUris: string[],
+): Promise<Map<string, boolean>> {
+  const trackIds = trackUris
+    .map(extractTrackIdFromUri)
+    .filter((id): id is string => Boolean(id));
+  const chunks = chunkTrackUris(trackIds, 50);
+  const explicitById = new Map<string, boolean>();
+  for (const idChunk of chunks) {
+    const response = await spotifyJson<SpotifyTracksResponse>({
+      method: "GET",
+      path: "/tracks",
+      accessToken,
+      query: { ids: idChunk.join(",") },
+    });
+    for (const track of response.tracks) {
+      if (!track?.id) {
+        continue;
+      }
+      explicitById.set(track.id, track.explicit === true);
+    }
+  }
+  return explicitById;
+}
+
+function extractTrackIdFromUri(uri: string): string | null {
+  const match = uri.match(/^spotify:track:([A-Za-z0-9]{22})$/);
+  return match?.[1] ?? null;
 }
 
 export function buildTrackUris(trackIdentifiers: string[]): string[] {

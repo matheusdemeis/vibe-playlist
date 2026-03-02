@@ -196,3 +196,58 @@ describe("buildTrackUris", () => {
     ]);
   });
 });
+
+describe("savePlaylistToSpotify", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("returns a restriction error when account blocks all explicit tracks", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/me") && method === "GET") {
+        return new Response(
+          JSON.stringify({ explicit_content: { filter_enabled: true, filter_locked: false } }),
+          { status: 200 },
+        );
+      }
+      if (url.includes("/me/playlists") && method === "POST") {
+        return new Response(
+          JSON.stringify({
+            id: "playlist-1",
+            public: false,
+            collaborative: false,
+            owner: { id: "user-1" },
+            external_urls: { spotify: "https://open.spotify.com/playlist/playlist-1" },
+          }),
+          { status: 201 },
+        );
+      }
+      if (url.includes("/tracks?ids=") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            tracks: [{ id: "6gBFPUFcJLzWGx4lenP6h2", explicit: true }],
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify({ error: "unexpected call" }), { status: 500 });
+    });
+
+    const { savePlaylistToSpotify } = await import("./save");
+    const result = await savePlaylistToSpotify({
+      accessToken: "token-1",
+      grantedScopes: ["playlist-modify-private"],
+      name: "Test",
+      description: "Desc",
+      isPublic: false,
+      trackUris: ["spotify:track:6gBFPUFcJLzWGx4lenP6h2"],
+    });
+
+    expect(fetchMock).toHaveBeenCalled();
+    expect(result.tracksAdded).toBe(false);
+    expect(result.tracksAddedCount).toBe(0);
+    expect(result.error?.status).toBe(403);
+  });
+});
