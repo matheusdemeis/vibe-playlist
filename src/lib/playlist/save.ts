@@ -16,12 +16,19 @@ type SpotifyCreatePlaylistResponse = {
 
 type SpotifyMeResponse = {
   id: string;
+  explicit_content?: {
+    filter_enabled?: boolean;
+  };
 };
 
 type SpotifyPlaylistMetaResponse = {
   owner?: { id?: string };
   collaborative?: boolean;
   public?: boolean | null;
+};
+
+type SpotifyTracksLookupResponse = {
+  tracks: Array<{ id: string; explicit?: boolean } | null>;
 };
 
 type SavePlaylistInput = {
@@ -95,6 +102,7 @@ export async function savePlaylistToSpotify(input: SavePlaylistInput): Promise<S
     playlist.id,
     trackUris,
     SPOTIFY_TRACKS_BATCH_SIZE,
+    playlist.requestedPublic,
   );
   void snapshotId;
   // Visibility updates are best-effort and should not block add-tracks success.
@@ -116,6 +124,7 @@ export async function addTracksInBatches(
   playlistId: string,
   trackUris: string[],
   batchSize = SPOTIFY_TRACKS_BATCH_SIZE,
+  requestedPublic?: boolean,
 ): Promise<{ snapshotId: string | null; tracksAddedCount: number }> {
   const validatedTrackUris = validateTrackUris(trackUris);
   if (validatedTrackUris.length === 0) {
@@ -135,7 +144,11 @@ export async function addTracksInBatches(
   const endpoint = `/playlists/${playlistId}/tracks`;
   // /me succeeds only for user tokens from Authorization Code flow.
   const me = await getCurrentSpotifyUser(accessToken);
+  if (requestedPublic === false) {
+    await enforcePrivateBeforeInsert(accessToken, playlistId);
+  }
   for (const uris of batches) {
+    let attemptedPrivateReenforceAfter403 = false;
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       try {
         const data = await spotifyJson<{ snapshot_id?: string }>({
@@ -154,6 +167,40 @@ export async function addTracksInBatches(
         }
 
         if (error.status === 403) {
+          if (requestedPublic === false && !attemptedPrivateReenforceAfter403) {
+            attemptedPrivateReenforceAfter403 = true;
+            await enforcePrivateBeforeInsert(accessToken, playlistId);
+            traceSaveLibrary("spotify_add_tracks_403_private_retry", {
+              playlistId,
+              attempt,
+            });
+            continue;
+          }
+          // If account explicit filtering is enabled, Spotify can reject batch inserts with 403.
+          const filteredUris = await dropExplicitUrisForFilteredAccounts(
+            accessToken,
+            uris,
+            me.explicit_content?.filter_enabled === true,
+          );
+          if (filteredUris.length > 0 && filteredUris.length < uris.length) {
+            const retryData = await spotifyJson<{ snapshot_id?: string }>({
+              method: "POST",
+              path: endpoint,
+              accessToken,
+              json: { uris: filteredUris },
+            });
+            addedCount += filteredUris.length;
+            latestSnapshotId =
+              typeof retryData.snapshot_id === "string"
+                ? retryData.snapshot_id
+                : latestSnapshotId;
+            traceSaveLibrary("spotify_add_tracks_403_filtered_retry", {
+              playlistId,
+              originalCount: uris.length,
+              filteredCount: filteredUris.length,
+            });
+            break;
+          }
           await logPlaylistOwnershipForForbidden(accessToken, playlistId, me.id);
           traceSaveLibrary("spotify_add_tracks_403", {
             playlistId,
@@ -195,6 +242,74 @@ export async function addTracksInBatches(
     snapshotId: latestSnapshotId,
     tracksAddedCount: addedCount,
   };
+}
+
+async function enforcePrivateBeforeInsert(accessToken: string, playlistId: string): Promise<void> {
+  try {
+    await spotifyJson({
+      method: "PUT",
+      path: `/playlists/${playlistId}`,
+      accessToken,
+      json: { public: false },
+    });
+    await wait(500);
+  } catch (error) {
+    if (error instanceof SpotifyClientError) {
+      traceSaveLibrary("spotify_pre_add_private_enforce_warning", {
+        playlistId,
+        status: error.status,
+        endpoint: error.path,
+      });
+      return;
+    }
+    throw error;
+  }
+}
+
+async function dropExplicitUrisForFilteredAccounts(
+  accessToken: string,
+  uris: string[],
+  explicitFilterEnabled: boolean,
+): Promise<string[]> {
+  if (!explicitFilterEnabled) {
+    return uris;
+  }
+
+  const trackIds = uris
+    .map((uri) => uri.match(/^spotify:track:([A-Za-z0-9]{22})$/)?.[1] ?? null)
+    .filter((id): id is string => Boolean(id));
+  if (trackIds.length === 0) {
+    return uris;
+  }
+
+  const explicitById = new Map<string, boolean>();
+  const chunks = chunkTrackUris(trackIds, 50);
+  for (const chunk of chunks) {
+    try {
+      const data = await spotifyJson<SpotifyTracksLookupResponse>({
+        method: "GET",
+        path: "/tracks",
+        accessToken,
+        query: { ids: chunk.join(",") },
+      });
+      for (const track of data.tracks) {
+        if (!track?.id) {
+          continue;
+        }
+        explicitById.set(track.id, track.explicit === true);
+      }
+    } catch {
+      return uris;
+    }
+  }
+
+  return uris.filter((uri) => {
+    const id = uri.match(/^spotify:track:([A-Za-z0-9]{22})$/)?.[1];
+    if (!id) {
+      return true;
+    }
+    return explicitById.get(id) !== true;
+  });
 }
 
 async function getCurrentSpotifyUser(accessToken: string): Promise<SpotifyMeResponse> {
