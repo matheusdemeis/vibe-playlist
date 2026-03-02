@@ -33,6 +33,10 @@ export default function Home() {
   const [message, setMessage] = useState<string | null>(null);
   const [tracks, setTracks] = useState<GenerateResponse["tracks"]>([]);
   const [status, setStatus] = useState<GenerateStatus>("idle");
+  const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
+  const [playlistName, setPlaylistName] = useState("");
+  const [playlistDescription, setPlaylistDescription] = useState("Generated with Vibe Playlist");
+  const [isPublicPlaylist, setIsPublicPlaylist] = useState(false);
 
   useEffect(() => {
     const checkConnection = async () => {
@@ -94,6 +98,15 @@ export default function Home() {
     }
   };
 
+  const handleOpenSaveModal = () => {
+    const fallbackName = "Vibe Playlist";
+    const trimmedQuery = query.trim();
+    setPlaylistName(trimmedQuery ? `${trimmedQuery} • Vibe Playlist` : fallbackName);
+    setPlaylistDescription("Generated with Vibe Playlist");
+    setIsPublicPlaylist(false);
+    setIsSaveModalOpen(true);
+  };
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-zinc-50">
       <main className="flex w-full max-w-xl flex-col items-center gap-6 rounded-2xl bg-white p-10 text-center shadow-sm">
@@ -137,6 +150,13 @@ export default function Home() {
           <div className="w-full rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-left text-sm text-emerald-800">
             <p className="font-medium">Tracks generated successfully.</p>
             <p>{tracks.length} tracks were found from Spotify Search.</p>
+            <button
+              type="button"
+              onClick={handleOpenSaveModal}
+              className="mt-3 rounded-full bg-zinc-900 px-4 py-2 text-xs font-medium text-white hover:bg-zinc-700"
+            >
+              Save to Spotify
+            </button>
           </div>
         ) : null}
         {tracks.length > 0 ? (
@@ -162,6 +182,75 @@ export default function Home() {
           </ul>
         ) : null}
       </main>
+
+      {isSaveModalOpen ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Save playlist to Spotify"
+          className="fixed inset-0 z-30 flex items-end justify-center bg-black/30 p-4 sm:items-center"
+        >
+          <div className="w-full max-w-lg space-y-4 rounded-2xl bg-white p-5 shadow-xl sm:p-6">
+            <div className="space-y-1">
+              <h2 className="text-lg font-semibold text-zinc-900">Save to Spotify</h2>
+              <p className="text-sm text-zinc-600">
+                Review playlist details before saving.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <label htmlFor="playlist-name" className="text-sm font-medium text-zinc-900">
+                Playlist name
+              </label>
+              <input
+                id="playlist-name"
+                value={playlistName}
+                onChange={(event) => setPlaylistName(event.target.value)}
+                className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm text-zinc-900"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label htmlFor="playlist-description" className="text-sm font-medium text-zinc-900">
+                Description
+              </label>
+              <textarea
+                id="playlist-description"
+                value={playlistDescription}
+                onChange={(event) => setPlaylistDescription(event.target.value)}
+                rows={3}
+                className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm text-zinc-900"
+              />
+            </div>
+
+            <label className="flex items-center gap-2 text-sm text-zinc-900">
+              <input
+                type="checkbox"
+                checked={isPublicPlaylist}
+                onChange={(event) => setIsPublicPlaylist(event.target.checked)}
+              />
+              Make playlist public
+            </label>
+
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setIsSaveModalOpen(false)}
+                className="rounded-full border border-zinc-300 px-4 py-2 text-sm text-zinc-700 hover:bg-zinc-100"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled
+                className="rounded-full bg-zinc-300 px-4 py-2 text-sm text-white"
+              >
+                Save Playlist
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
