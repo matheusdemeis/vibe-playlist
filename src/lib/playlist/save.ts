@@ -37,9 +37,16 @@ type SavePlaylistInput = {
   trackUris: string[];
 };
 
+type CreatedPlaylist = {
+  id: string;
+  url: string;
+  visibility: "public" | "private" | "unknown";
+};
+
 export type SavePlaylistResult = {
   playlistId: string;
   playlistUrl: string;
+  playlistVisibility: "public" | "private" | "unknown";
   snapshotId: string | null;
   tracksAddedCount: number;
   tracksAdded: boolean;
@@ -103,7 +110,8 @@ export async function savePlaylistToSpotify(input: SavePlaylistInput): Promise<S
 
     return {
       playlistId: playlist.id,
-      playlistUrl: playlist.external_urls.spotify,
+      playlistUrl: playlist.url,
+      playlistVisibility: playlist.visibility,
       snapshotId,
       tracksAddedCount,
       tracksAdded: true,
@@ -117,7 +125,8 @@ export async function savePlaylistToSpotify(input: SavePlaylistInput): Promise<S
 
     return {
       playlistId: playlist.id,
-      playlistUrl: playlist.external_urls.spotify,
+      playlistUrl: playlist.url,
+      playlistVisibility: playlist.visibility,
       snapshotId: null,
       tracksAddedCount: 0,
       tracksAdded: false,
@@ -279,7 +288,7 @@ export function chunkTrackUris(trackUris: string[], batchSize = SPOTIFY_TRACKS_B
 async function createPlaylist(
   accessToken: string,
   input: { name: string; description: string; isPublic: boolean },
-): Promise<SpotifyCreatePlaylistResponse> {
+): Promise<CreatedPlaylist> {
   const finalPublic = input.isPublic === true;
   traceSaveLibrary("final_public_sent_to_spotify", {
     receivedIsPublic: input.isPublic,
@@ -358,7 +367,11 @@ async function createPlaylist(
       external_urls: createdPlaylist.external_urls ?? null,
     },
   });
-  if ((createdPlaylistMeta.public === true) !== finalPublic) {
+  if (
+    createdPlaylistMeta.public !== null &&
+    typeof createdPlaylistMeta.public === "boolean" &&
+    createdPlaylistMeta.public !== finalPublic
+  ) {
     throw new PlaylistSaveError(
       `Spotify created playlist with unexpected visibility (requested public=${String(finalPublic)}, actual public=${String(createdPlaylistMeta.public)}).`,
       422,
@@ -373,7 +386,16 @@ async function createPlaylist(
     );
   }
 
-  return createdPlaylist;
+  return {
+    id: createdPlaylist.id,
+    url: createdPlaylist.external_urls.spotify,
+    visibility:
+      createdPlaylistMeta.public === null
+        ? "unknown"
+        : createdPlaylistMeta.public
+          ? "public"
+          : "private",
+  };
 }
 
 export function buildTrackUris(trackIdentifiers: string[]): string[] {
