@@ -22,12 +22,14 @@ type ErrorResponse = {
         details?: unknown;
       };
   code?: string;
+  details?: Record<string, unknown>;
 };
 
 type SavePlaylistResponse = {
   playlistId: string;
   playlistUrl: string;
   snapshotId: string | null;
+  tracksAddedCount: number;
   tracksAdded: boolean;
   error?: {
     message?: string;
@@ -175,6 +177,15 @@ export default function Home() {
           typeof errorValue === "string"
             ? errorValue
             : errorValue?.message ?? "Could not save playlist.";
+        if ("code" in data && data.code === "spotify_playlist_visibility_mismatch") {
+          const requested = data.details?.requestedPublic;
+          const actual = data.details?.actualPublic;
+          setSaveMessage(
+            `Playlist visibility mismatch (requested: ${String(requested)}, actual: ${String(actual)}).`,
+          );
+          setSaveStatus("error");
+          return;
+        }
         if ("code" in data && data.code === "missing_scopes") {
           setShowReconnectPrompt(true);
         }
@@ -221,9 +232,9 @@ export default function Home() {
       });
 
       const data = (await response.json()) as
-        | { snapshotId: string | null; tracksAdded: boolean; error?: { message?: string } }
+        | { tracksAddedCount: number }
         | ErrorResponse;
-      if (!response.ok || ("tracksAdded" in data && data.tracksAdded !== true)) {
+      if (!response.ok) {
         const errorValue = "error" in data ? data.error : undefined;
         const errorMessage =
           typeof errorValue === "string"
@@ -238,14 +249,16 @@ export default function Home() {
         previous
           ? {
               ...previous,
-              snapshotId: "snapshotId" in data ? data.snapshotId : previous.snapshotId,
+              tracksAddedCount: "tracksAddedCount" in data ? data.tracksAddedCount : previous.tracksAddedCount,
               tracksAdded: true,
               error: undefined,
             }
           : previous,
       );
       setSaveStatus("success");
-      setSaveMessage("Tracks added successfully.");
+      setSaveMessage(
+        `Tracks added successfully (${ "tracksAddedCount" in data ? data.tracksAddedCount : tracks.length }).`,
+      );
     } catch {
       setSaveStatus("error");
       setSaveMessage("Could not add tracks to playlist.");
@@ -325,6 +338,9 @@ export default function Home() {
         {saveStatus === "success" && savedPlaylist ? (
           <div className="w-full rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-left text-sm text-emerald-800">
             <p className="font-medium">{playlistName.trim() || "Playlist"} saved to Spotify.</p>
+            <p className="mt-1 text-xs text-emerald-700">
+              Tracks added: {savedPlaylist.tracksAddedCount}
+            </p>
             {savedPlaylist.snapshotId ? (
               <p className="mt-1 text-xs text-emerald-700">Snapshot ID: {savedPlaylist.snapshotId}</p>
             ) : null}
