@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { addTracksInBatches, chunkTrackUris, normalizeTrackUris } from "./save";
+import { addTracksInBatches, buildTrackUris, chunkTrackUris, normalizeTrackUris } from "./save";
 
 describe("chunkTrackUris", () => {
   it("splits URIs into fixed-size chunks", () => {
@@ -23,7 +23,10 @@ describe("addTracksInBatches", () => {
       return new Response(JSON.stringify({ snapshot_id: "ok" }), { status: 201 });
     });
 
-    const uris = Array.from({ length: 205 }, (_, index) => `spotify:track:${index + 1}`);
+    const uris = Array.from(
+      { length: 205 },
+      (_, index) => `spotify:track:${String(index + 1).padStart(22, "A")}`,
+    );
     const snapshotId = await addTracksInBatches("token-123", "playlist-abc", uris, 100);
 
     expect(fetchMock).toHaveBeenCalledTimes(3);
@@ -43,6 +46,11 @@ describe("addTracksInBatches", () => {
     expect(firstBody.uris).toHaveLength(100);
     expect(secondBody.uris).toHaveLength(100);
     expect(thirdBody.uris).toHaveLength(5);
+    expect(firstCallArgs[1]?.method).toBe("POST");
+    expect(firstCallArgs[1]?.headers).toMatchObject({
+      Authorization: "Bearer token-123",
+      "Content-Type": "application/json",
+    });
     expect(snapshotId).toBe("ok");
   });
 });
@@ -57,5 +65,22 @@ describe("normalizeTrackUris", () => {
     ]);
 
     expect(uris).toEqual(["spotify:track:4iV5W9uYEdYUVa79Axb7Rh"]);
+  });
+});
+
+describe("buildTrackUris", () => {
+  it("converts raw ids to spotify track uris and removes invalid entries", () => {
+    const uris = buildTrackUris([
+      "4iV5W9uYEdYUVa79Axb7Rh",
+      "spotify:track:1301WleyT98MSxVHPZCA6M",
+      "spotify:track:not-a-valid-id",
+      "",
+      "invalid-id",
+    ]);
+
+    expect(uris).toEqual([
+      "spotify:track:4iV5W9uYEdYUVa79Axb7Rh",
+      "spotify:track:1301WleyT98MSxVHPZCA6M",
+    ]);
   });
 });

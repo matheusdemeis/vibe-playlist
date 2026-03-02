@@ -253,7 +253,7 @@ export function buildTrackUris(trackIdentifiers: string[]): string[] {
 export const normalizeTrackUris = buildTrackUris;
 
 function traceSaveLibrary(event: string, payload: Record<string, unknown>): void {
-  if (process.env.NODE_ENV === "production") {
+  if (process.env.NODE_ENV !== "development") {
     return;
   }
 
