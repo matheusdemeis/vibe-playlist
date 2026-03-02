@@ -244,11 +244,28 @@ async function createPlaylist(
     description: input.description,
     public: finalPublic,
   };
+  traceSaveLibrary("spotify_create_playlist_request", {
+    endpoint: "/me/playlists",
+    payload,
+  });
 
-  return spotifyRequest<SpotifyCreatePlaylistResponse>("/me/playlists", accessToken, {
+  const createdPlaylist = await spotifyRequest<SpotifyCreatePlaylistResponse>("/me/playlists", accessToken, {
     method: "POST",
     body: JSON.stringify(payload),
   });
+  const createdPlaylistMeta = await spotifyRequest<SpotifyPlaylistResponse>(
+    `/playlists/${createdPlaylist.id}`,
+    accessToken,
+    { method: "GET" },
+  );
+  traceSaveLibrary("spotify_create_playlist_response_meta", {
+    playlistId: createdPlaylist.id,
+    playlistPublic: createdPlaylistMeta.public,
+    playlistOwnerId: createdPlaylistMeta.owner.id,
+    playlistCollaborative: createdPlaylistMeta.collaborative,
+  });
+
+  return createdPlaylist;
 }
 
 async function spotifyRequest<T>(
