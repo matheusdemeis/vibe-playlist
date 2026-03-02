@@ -44,7 +44,7 @@ describe("addTracksInBatches", () => {
       { length: 205 },
       (_, index) => `spotify:track:${String(index + 1).padStart(22, "A")}`,
     );
-    const snapshotId = await addTracksInBatches(
+    const result = await addTracksInBatches(
       "token-123",
       "playlist-abc",
       uris,
@@ -74,7 +74,8 @@ describe("addTracksInBatches", () => {
     expect(firstHeaders.get("Authorization")).toBe("Bearer token-123");
     expect(firstHeaders.get("Content-Type")).toBe("application/json");
     expect(firstHeaders.get("Accept")).toBe("application/json");
-    expect(snapshotId).toBe("ok");
+    expect(result.snapshotId).toBe("ok");
+    expect(result.tracksAddedCount).toBe(205);
   });
 });
 
