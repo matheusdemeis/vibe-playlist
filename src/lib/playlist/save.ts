@@ -176,12 +176,26 @@ export async function addTracksInBatches(
             });
             continue;
           }
-          // If account explicit filtering is enabled, Spotify can reject batch inserts with 403.
+          // Spotify can reject a whole batch when it contains explicit/restricted tracks.
           const filteredUris = await dropExplicitUrisForFilteredAccounts(
             accessToken,
             uris,
-            me.explicit_content?.filter_enabled === true,
           );
+          if (filteredUris.length === 0 && uris.length > 0) {
+            throw new PlaylistSaveError(
+              "All generated tracks were rejected by Spotify for this account. Try generating a different set.",
+              403,
+              "spotify_add_tracks_failed",
+              {
+                endpoint,
+                body: error.bodyText,
+                extra: {
+                  tracksAddedCount: addedCount,
+                  rejectedCount: uris.length,
+                },
+              },
+            );
+          }
           if (filteredUris.length > 0 && filteredUris.length < uris.length) {
             const retryData = await spotifyJson<{ snapshot_id?: string }>({
               method: "POST",
@@ -198,6 +212,7 @@ export async function addTracksInBatches(
               playlistId,
               originalCount: uris.length,
               filteredCount: filteredUris.length,
+              explicitFilterEnabled: me.explicit_content?.filter_enabled === true,
             });
             break;
           }
@@ -269,12 +284,7 @@ async function enforcePrivateBeforeInsert(accessToken: string, playlistId: strin
 async function dropExplicitUrisForFilteredAccounts(
   accessToken: string,
   uris: string[],
-  explicitFilterEnabled: boolean,
 ): Promise<string[]> {
-  if (!explicitFilterEnabled) {
-    return uris;
-  }
-
   const trackIds = uris
     .map((uri) => uri.match(/^spotify:track:([A-Za-z0-9]{22})$/)?.[1] ?? null)
     .filter((id): id is string => Boolean(id));
