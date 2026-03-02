@@ -312,10 +312,19 @@ async function createPlaylist(
   });
   traceSaveLibrary("spotify_create_playlist_response_meta", {
     playlistId: createdPlaylist.id,
+    requestedPublic: finalPublic,
     playlistPublic: createdPlaylistMeta.public,
     playlistOwnerId: createdPlaylistMeta.owner.id,
     playlistCollaborative: createdPlaylistMeta.collaborative,
   });
+  if ((createdPlaylistMeta.public === true) !== finalPublic) {
+    throw new PlaylistSaveError(
+      `Spotify created playlist with unexpected visibility (requested public=${String(finalPublic)}, actual public=${String(createdPlaylistMeta.public)}).`,
+      502,
+      "spotify_playlist_visibility_mismatch",
+      { endpoint: `/playlists/${createdPlaylist.id}` },
+    );
+  }
 
   return createdPlaylist;
 }
