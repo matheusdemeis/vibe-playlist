@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type GenerateResponse = {
   tracks: Array<{
@@ -59,6 +59,7 @@ export default function Home() {
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [savedPlaylist, setSavedPlaylist] = useState<SavePlaylistResponse | null>(null);
   const [isRetryingAddTracks, setIsRetryingAddTracks] = useState(false);
+  const generateInFlightRef = useRef(false);
 
   useEffect(() => {
     const checkConnection = async () => {
@@ -90,6 +91,9 @@ export default function Home() {
     spotifyScopes.includes("playlist-modify-public");
 
   const handleGeneratePlaylist = async () => {
+    if (generateInFlightRef.current || isGenerating) {
+      return;
+    }
     const trimmedQuery = query.trim();
     if (!trimmedQuery) {
       setMessage("Please enter a search query.");
@@ -97,6 +101,7 @@ export default function Home() {
       return;
     }
 
+    generateInFlightRef.current = true;
     setIsGenerating(true);
     setStatus("loading");
     setMessage(null);
@@ -131,6 +136,7 @@ export default function Home() {
       setStatus("error");
     } finally {
       setIsGenerating(false);
+      generateInFlightRef.current = false;
     }
   };
 
