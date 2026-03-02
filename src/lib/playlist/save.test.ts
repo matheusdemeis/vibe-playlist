@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { addTracksInBatches, chunkTrackUris } from "./save";
+import { addTracksInBatches, chunkTrackUris, normalizeTrackUris } from "./save";
 
 describe("chunkTrackUris", () => {
   it("splits URIs into fixed-size chunks", () => {
@@ -44,5 +44,18 @@ describe("addTracksInBatches", () => {
     expect(secondBody.uris).toHaveLength(100);
     expect(thirdBody.uris).toHaveLength(5);
     expect(snapshotId).toBe("ok");
+  });
+});
+
+describe("normalizeTrackUris", () => {
+  it("keeps spotify uris and converts raw track ids", () => {
+    const uris = normalizeTrackUris([
+      "spotify:track:4iV5W9uYEdYUVa79Axb7Rh",
+      "4iV5W9uYEdYUVa79Axb7Rh",
+      "invalid",
+      " ",
+    ]);
+
+    expect(uris).toEqual(["spotify:track:4iV5W9uYEdYUVa79Axb7Rh"]);
   });
 });

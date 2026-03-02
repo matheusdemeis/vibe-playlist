@@ -29,4 +29,18 @@ describe("validateSavePayload", () => {
       expect(result.error).toContain("between 1 and 100");
     }
   });
+
+  it("treats string isPublic values as false", () => {
+    const result = validateSavePayload({
+      name: "My Playlist",
+      description: "desc",
+      isPublic: "false",
+      trackUris: ["spotify:track:1"],
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.isPublic).toBe(false);
+    }
+  });
 });

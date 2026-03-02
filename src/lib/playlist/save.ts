@@ -171,7 +171,7 @@ async function spotifyRequest<T>(
   return (await response.json()) as T;
 }
 
-function normalizeTrackUris(trackUris: string[]): string[] {
+export function normalizeTrackUris(trackUris: string[]): string[] {
   const normalized = trackUris
     .map((value) => value.trim())
     .filter(Boolean)
