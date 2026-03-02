@@ -248,28 +248,8 @@ export async function addTracksInBatches(
   }
 
   for (const uris of batches) {
-    const addTracksHeaders = {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-    };
-
-    traceSaveLibrary("spotify_add_tracks_request", {
-      method: "POST",
-      endpoint,
-      playlistId,
-      attemptedTrackCount: uris.length,
-      hasAuthorizationHeader: Boolean(addTracksHeaders.Authorization),
-      authTokenLength: accessToken.length,
-      hasContentTypeHeader: addTracksHeaders["Content-Type"] === "application/json",
-    });
-
     try {
       const payload = { uris };
-      traceSaveLibrary("spotify_add_tracks_json", {
-        method: "POST",
-        path: endpoint,
-        bodyPreview: JSON.stringify(payload).slice(0, 200),
-      });
       const data = await spotifyJson<{ snapshot_id?: string }>({
         method: "POST",
         path: endpoint,
@@ -315,28 +295,14 @@ async function createPlaylist(
   input: { name: string; description: string; isPublic: boolean },
 ): Promise<CreatedPlaylist> {
   const finalPublic = input.isPublic === true;
-  traceSaveLibrary("final_public_sent_to_spotify", {
-    receivedIsPublic: input.isPublic,
-    finalPublic,
-  });
 
   const payload = {
     name: input.name,
     description: input.description,
     public: finalPublic,
   };
-  traceSaveLibrary("spotify_create_playlist_request", {
-    method: "POST",
-    endpoint: "/me/playlists",
-    public: payload.public,
-  });
   let createdPlaylist: SpotifyCreatePlaylistResponse;
   try {
-    traceSaveLibrary("spotify_create_playlist_json", {
-      method: "POST",
-      path: "/me/playlists",
-      bodyPreview: JSON.stringify(payload).slice(0, 200),
-    });
     createdPlaylist = await spotifyJson<SpotifyCreatePlaylistResponse>({
       method: "POST",
       path: "/me/playlists",
