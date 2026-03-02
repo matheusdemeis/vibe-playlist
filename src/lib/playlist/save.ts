@@ -68,10 +68,6 @@ export class PlaylistSaveError extends Error {
 
 export async function savePlaylistToSpotify(input: SavePlaylistInput): Promise<SavePlaylistResult> {
   const sharedAccessToken = input.accessToken;
-  traceSaveLibrary("spotify_save_shared_token", {
-    tokenLength: sharedAccessToken.length,
-    usedForCreateAndAdd: true,
-  });
 
   const trackUris = buildTrackUris(input.trackUris);
   if (trackUris.length === 0) {
@@ -198,8 +194,6 @@ export async function addTracksInBatches(
       endpoint,
       url: fullUrl,
       attemptedTrackCount: uris.length,
-      firstTrackUris: uris.slice(0, 3),
-      redactedCount: Math.max(0, uris.length - 3),
       hasAuthorizationHeader: Boolean(addTracksHeaders.Authorization),
       authTokenLength: accessToken.length,
       hasContentTypeHeader: addTracksHeaders["Content-Type"] === "application/json",
@@ -218,7 +212,6 @@ export async function addTracksInBatches(
       endpoint,
       status: response.status,
       wwwAuthenticate: response.headers.get("WWW-Authenticate"),
-      bodySummary: summarizeSpotifyBody(rawBody, parsedBody),
     });
 
     if (!response.ok) {
@@ -271,7 +264,7 @@ async function createPlaylist(
   };
   traceSaveLibrary("spotify_create_playlist_request", {
     endpoint: "/me/playlists",
-    payload,
+    public: payload.public,
   });
 
   const createdPlaylist = await spotifyRequest<SpotifyCreatePlaylistResponse>("/me/playlists", accessToken, {
@@ -359,25 +352,4 @@ function parseJsonSafely(value: string): unknown {
   } catch {
     return null;
   }
-}
-
-function summarizeSpotifyBody(rawBody: string, parsedBody: unknown): string {
-  if (
-    parsedBody &&
-    typeof parsedBody === "object" &&
-    "error" in parsedBody &&
-    typeof (parsedBody as { error?: unknown }).error === "object" &&
-    (parsedBody as { error?: Record<string, unknown> }).error
-  ) {
-    const error = (parsedBody as { error: Record<string, unknown> }).error;
-    const status = typeof error.status === "number" ? error.status : undefined;
-    const message = typeof error.message === "string" ? error.message : undefined;
-    return status && message ? `${status}: ${message}` : message ?? rawBody.slice(0, 160);
-  }
-
-  if (rawBody.length <= 160) {
-    return rawBody;
-  }
-
-  return `${rawBody.slice(0, 157)}...`;
 }
