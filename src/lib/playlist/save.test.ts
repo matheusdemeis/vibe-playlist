@@ -19,7 +19,24 @@ describe("addTracksInBatches", () => {
   });
 
   it("posts all URI batches to Spotify", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/me")) {
+        return new Response(JSON.stringify({ id: "user-123", display_name: "Test User" }), {
+          status: 200,
+        });
+      }
+      if (url.includes("/playlists/playlist-abc") && !url.endsWith("/tracks")) {
+        return new Response(
+          JSON.stringify({
+            owner: { id: "user-123" },
+            collaborative: false,
+            public: false,
+          }),
+          { status: 200 },
+        );
+      }
+
       return new Response(JSON.stringify({ snapshot_id: "ok" }), { status: 201 });
     });
 
@@ -27,13 +44,19 @@ describe("addTracksInBatches", () => {
       { length: 205 },
       (_, index) => `spotify:track:${String(index + 1).padStart(22, "A")}`,
     );
-    const snapshotId = await addTracksInBatches("token-123", "playlist-abc", uris, 100);
+    const snapshotId = await addTracksInBatches(
+      "token-123",
+      "playlist-abc",
+      uris,
+      100,
+      ["playlist-modify-private"],
+    );
 
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
 
-    const firstCallArgs = fetchMock.mock.calls[0];
-    const secondCallArgs = fetchMock.mock.calls[1];
-    const thirdCallArgs = fetchMock.mock.calls[2];
+    const firstCallArgs = fetchMock.mock.calls[2];
+    const secondCallArgs = fetchMock.mock.calls[3];
+    const thirdCallArgs = fetchMock.mock.calls[4];
 
     expect(firstCallArgs[0]).toContain("/playlists/playlist-abc/tracks");
     expect(secondCallArgs[0]).toContain("/playlists/playlist-abc/tracks");

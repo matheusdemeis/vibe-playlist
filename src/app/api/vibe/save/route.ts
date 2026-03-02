@@ -5,10 +5,10 @@ import {
   type SavePlaylistResult,
 } from "../../../../lib/playlist/save";
 import {
+  getRequiredPlaylistModifyScope,
   getSpotifySession,
   hasGrantedScopes,
-  REQUIRED_PLAYLIST_SCOPES,
-} from "@/lib/auth/spotify-session";
+} from "../../../../lib/auth/spotify-session";
 
 type SavePlaylistRequestBody = {
   name?: unknown;
@@ -33,21 +33,6 @@ export async function POST(request: NextRequest) {
       { status: 401 },
     );
   }
-  traceSave("playlist_scope_check", {
-    grantedScopes,
-    hasRequiredScopes: hasGrantedScopes(grantedScopes, REQUIRED_PLAYLIST_SCOPES),
-    requiredScopes: REQUIRED_PLAYLIST_SCOPES,
-  });
-  if (!hasGrantedScopes(grantedScopes, REQUIRED_PLAYLIST_SCOPES)) {
-    return NextResponse.json<SavePlaylistApiResponse>(
-      {
-        error: "Reconnect Spotify to grant playlist permissions",
-        code: "missing_scopes",
-      },
-      { status: 403 },
-    );
-  }
-
   let body: SavePlaylistRequestBody;
   try {
     body = (await request.json()) as SavePlaylistRequestBody;
@@ -69,10 +54,27 @@ export async function POST(request: NextRequest) {
     raw: body.isPublic,
     normalized: parseResult.value.isPublic,
   });
+  const requiredScope = getRequiredPlaylistModifyScope(parseResult.value.isPublic);
+  const hasRequiredScope = hasGrantedScopes(grantedScopes, [requiredScope]);
+  traceSave("playlist_scope_check", {
+    grantedScopes,
+    requiredScope,
+    hasRequiredScope,
+  });
+  if (!hasRequiredScope) {
+    return NextResponse.json<SavePlaylistApiResponse>(
+      {
+        error: "Reconnect to grant playlist permissions",
+        code: "missing_scopes",
+      },
+      { status: 403 },
+    );
+  }
 
   try {
     const result = await savePlaylistToSpotify({
       accessToken,
+      grantedScopes,
       name: parseResult.value.name,
       description: parseResult.value.description,
       isPublic: parseResult.value.isPublic,
@@ -88,7 +90,7 @@ export async function POST(request: NextRequest) {
           error: isOwnerMismatch
             ? "Connected Spotify account does not own this playlist. Reconnect and try again."
             : shouldReconnect
-              ? "Reconnect Spotify to grant playlist permissions"
+              ? "Reconnect to grant playlist permissions"
               : error.message,
           code: isOwnerMismatch ? "playlist_owner_mismatch" : shouldReconnect ? "missing_scopes" : error.code,
         },

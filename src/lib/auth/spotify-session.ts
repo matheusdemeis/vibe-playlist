@@ -6,6 +6,7 @@ export const REQUIRED_PLAYLIST_SCOPES = [
   "playlist-modify-private",
   "playlist-modify-public",
 ] as const;
+export type PlaylistModifyScope = (typeof REQUIRED_PLAYLIST_SCOPES)[number];
 
 export type SpotifySession = {
   accessToken: string | null;
@@ -28,4 +29,8 @@ export async function getSpotifyAccessToken(): Promise<string | null> {
 
 export function hasGrantedScopes(grantedScopes: string[], requiredScopes: readonly string[]): boolean {
   return requiredScopes.every((scope) => grantedScopes.includes(scope));
+}
+
+export function getRequiredPlaylistModifyScope(isPublic: boolean | null): PlaylistModifyScope {
+  return isPublic === true ? "playlist-modify-public" : "playlist-modify-private";
 }

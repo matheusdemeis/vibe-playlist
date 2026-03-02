@@ -2,9 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { addTracksInBatches, PlaylistSaveError } from "@/lib/playlist/save";
 import {
   getSpotifySession,
-  hasGrantedScopes,
-  REQUIRED_PLAYLIST_SCOPES,
-} from "@/lib/auth/spotify-session";
+} from "../../../../../lib/auth/spotify-session";
 
 type AddTracksBody = {
   trackUris?: unknown;
@@ -35,23 +33,6 @@ export async function POST(
       { status: 401 },
     );
   }
-  traceAddTracks("playlist_scope_check", {
-    grantedScopes,
-    hasRequiredScopes: hasGrantedScopes(grantedScopes, REQUIRED_PLAYLIST_SCOPES),
-    requiredScopes: REQUIRED_PLAYLIST_SCOPES,
-  });
-  if (!hasGrantedScopes(grantedScopes, REQUIRED_PLAYLIST_SCOPES)) {
-    return NextResponse.json<AddTracksError>(
-      {
-        error: {
-          message: "Reconnect Spotify to grant playlist permissions",
-          status: 403,
-        },
-      },
-      { status: 403 },
-    );
-  }
-
   const { playlistId } = await context.params;
   if (!playlistId) {
     return NextResponse.json<AddTracksError>(
@@ -79,7 +60,7 @@ export async function POST(
   }
 
   try {
-    const snapshotId = await addTracksInBatches(accessToken, playlistId, trackUris, 100);
+    const snapshotId = await addTracksInBatches(accessToken, playlistId, trackUris, 100, grantedScopes);
     return NextResponse.json<AddTracksSuccess>({
       playlistId,
       snapshotId,
@@ -95,7 +76,7 @@ export async function POST(
             message: isOwnerMismatch
               ? "Connected Spotify account does not own this playlist. Reconnect and try again."
               : shouldReconnect
-                ? "Reconnect Spotify to grant playlist permissions"
+                ? "Reconnect to grant playlist permissions"
                 : error.message,
             status: error.status,
             endpoint: error.endpoint,
@@ -121,12 +102,4 @@ function parseTrackUris(value: unknown): string[] {
     .filter((item): item is string => typeof item === "string")
     .map((item) => item.trim())
     .filter(Boolean);
-}
-
-function traceAddTracks(event: string, payload: Record<string, unknown>): void {
-  if (process.env.NODE_ENV !== "development") {
-    return;
-  }
-
-  console.log(`[TRACE][add-tracks] ${event}`, payload);
 }

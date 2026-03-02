@@ -1,4 +1,5 @@
 import { formatSpotifyApiErrorMessage } from "../spotify/error";
+import { getRequiredPlaylistModifyScope, hasGrantedScopes } from "../auth/spotify-session";
 
 const SPOTIFY_API_BASE_URL = "https://api.spotify.com/v1";
 export const SPOTIFY_TRACKS_BATCH_SIZE = 100;
@@ -25,6 +26,7 @@ type SpotifyPlaylistResponse = {
 
 type SavePlaylistInput = {
   accessToken: string;
+  grantedScopes: string[];
   name: string;
   description: string;
   isPublic: boolean;
@@ -87,7 +89,13 @@ export async function savePlaylistToSpotify(input: SavePlaylistInput): Promise<S
   });
 
   try {
-    const snapshotId = await addTracksInBatches(sharedAccessToken, playlist.id, trackUris);
+    const snapshotId = await addTracksInBatches(
+      sharedAccessToken,
+      playlist.id,
+      trackUris,
+      SPOTIFY_TRACKS_BATCH_SIZE,
+      input.grantedScopes,
+    );
 
     return {
       playlistId: playlist.id,
@@ -121,6 +129,7 @@ export async function addTracksInBatches(
   playlistId: string,
   trackUris: string[],
   batchSize = SPOTIFY_TRACKS_BATCH_SIZE,
+  grantedScopes: string[] = [],
 ): Promise<string | null> {
   const validatedTrackUris = buildTrackUris(trackUris);
   if (validatedTrackUris.length === 0) {
@@ -158,6 +167,22 @@ export async function addTracksInBatches(
       "Connected Spotify account does not own this playlist. Reconnect and try again.",
       403,
       "playlist_owner_mismatch",
+      { endpoint: `/playlists/${playlistId}` },
+    );
+  }
+  const requiredScope = getRequiredPlaylistModifyScope(playlist.public);
+  const hasRequiredScope = hasGrantedScopes(grantedScopes, [requiredScope]);
+  traceSaveLibrary("spotify_add_tracks_scope_check", {
+    playlistPublic: playlist.public,
+    requiredScope,
+    grantedScopes,
+    hasRequiredScope,
+  });
+  if (!hasRequiredScope) {
+    throw new PlaylistSaveError(
+      "Reconnect to grant playlist permissions",
+      403,
+      "missing_scopes",
       { endpoint: `/playlists/${playlistId}` },
     );
   }
