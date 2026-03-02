@@ -26,6 +26,7 @@ export type SavePlaylistResult = {
   error?: {
     message: string;
     status: number;
+    endpoint?: string;
   };
 };
 
@@ -90,6 +91,7 @@ export async function savePlaylistToSpotify(input: SavePlaylistInput): Promise<S
       error: {
         message,
         status,
+        endpoint: error instanceof PlaylistSaveError ? error.endpoint : undefined,
       },
     };
   }
