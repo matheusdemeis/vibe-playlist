@@ -87,8 +87,8 @@ function parseSavePayload(payload: SavePlaylistRequestBody):
     return { ok: false, error: "Playlist name is required." };
   }
 
-  if (trackUris.length === 0) {
-    return { ok: false, error: "At least one track URI is required." };
+  if (trackUris.length < 1 || trackUris.length > 100) {
+    return { ok: false, error: "Track URIs must contain between 1 and 100 items." };
   }
 
   return {

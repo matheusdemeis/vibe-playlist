@@ -26,7 +26,7 @@ type SavePlaylistApiError = {
 type SavePlaylistApiSuccess = {
   playlistId: string;
   playlistUrl: string;
-  addedTrackCount: number;
+  snapshotId: string | null;
 };
 
 function readRequestInput(params: URLSearchParams): VibeBuilderInput {
@@ -333,7 +333,7 @@ export default function VibeResultsPage() {
         <section className="space-y-4">
           {saveResult ? (
             <div className="space-y-2 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
-              <p>Playlist saved with {saveResult.addedTrackCount} tracks.</p>
+              <p>Playlist saved with {tracks.length} tracks.</p>
               <a
                 href={saveResult.playlistUrl}
                 target="_blank"

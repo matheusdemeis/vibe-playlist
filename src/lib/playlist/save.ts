@@ -21,7 +21,7 @@ type SavePlaylistInput = {
 export type SavePlaylistResult = {
   playlistId: string;
   playlistUrl: string;
-  addedTrackCount: number;
+  snapshotId: string | null;
 };
 
 export class PlaylistSaveError extends Error {
@@ -48,12 +48,12 @@ export async function savePlaylistToSpotify(input: SavePlaylistInput): Promise<S
     isPublic: input.isPublic,
   });
 
-  await addTracksInBatches(input.accessToken, playlist.id, trackUris);
+  const snapshotId = await addTracksInBatches(input.accessToken, playlist.id, trackUris);
 
   return {
     playlistId: playlist.id,
     playlistUrl: playlist.external_urls.spotify,
-    addedTrackCount: trackUris.length,
+    snapshotId,
   };
 }
 
@@ -62,15 +62,23 @@ export async function addTracksInBatches(
   playlistId: string,
   trackUris: string[],
   batchSize = SPOTIFY_TRACKS_BATCH_SIZE,
-): Promise<void> {
+): Promise<string | null> {
   const batches = chunkTrackUris(trackUris, batchSize);
+  let latestSnapshotId: string | null = null;
 
   for (const uris of batches) {
-    await spotifyRequest(`/playlists/${playlistId}/tracks`, accessToken, {
+    const response = await spotifyRequest<{ snapshot_id: string }>(
+      `/playlists/${playlistId}/tracks`,
+      accessToken,
+      {
       method: "POST",
       body: JSON.stringify({ uris }),
-    });
+      },
+    );
+    latestSnapshotId = response.snapshot_id;
   }
+
+  return latestSnapshotId;
 }
 
 export function chunkTrackUris(trackUris: string[], batchSize = SPOTIFY_TRACKS_BATCH_SIZE): string[][] {
