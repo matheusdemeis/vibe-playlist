@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { addTracksInBatches, PlaylistSaveError } from "@/lib/playlist/save";
+import { addTracksInBatches, PlaylistSaveError, validateTrackUris } from "@/lib/playlist/save";
 import {
   getSpotifySession,
 } from "../../../../../lib/auth/spotify-session";
@@ -51,10 +51,22 @@ export async function POST(
     );
   }
 
-  const trackUris = parseTrackUris(body.trackUris);
+  const requestedTrackUris = parseTrackUris(body.trackUris);
+  const trackUris = validateTrackUris(requestedTrackUris);
   if (trackUris.length < 1) {
     return NextResponse.json<AddTracksError>(
       { error: { message: "At least one track URI is required.", status: 400 } },
+      { status: 400 },
+    );
+  }
+  if (trackUris.length !== requestedTrackUris.length) {
+    return NextResponse.json<AddTracksError>(
+      {
+        error: {
+          message: "Each track URI must start with spotify:track: and contain a valid track id.",
+          status: 400,
+        },
+      },
       { status: 400 },
     );
   }
