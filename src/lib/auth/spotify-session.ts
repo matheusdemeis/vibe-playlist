@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 
 export const SPOTIFY_ACCESS_TOKEN_COOKIE_NAME = "spotify_access_token";
-export const SPOTIFY_GRANTED_SCOPES_COOKIE_NAME = "spotify_access_scopes";
+export const SPOTIFY_TOKEN_SCOPE_RAW_COOKIE_NAME = "spotify_access_scope_raw";
 export const REQUIRED_PLAYLIST_SCOPES = [
   "playlist-modify-private",
   "playlist-modify-public",
@@ -10,16 +10,18 @@ export type PlaylistModifyScope = (typeof REQUIRED_PLAYLIST_SCOPES)[number];
 
 export type SpotifySession = {
   accessToken: string | null;
+  tokenResponseScopeRaw: string | null;
   grantedScopes: string[];
 };
 
 export async function getSpotifySession(): Promise<SpotifySession> {
   const cookieStore = await cookies();
   const accessToken = cookieStore.get(SPOTIFY_ACCESS_TOKEN_COOKIE_NAME)?.value ?? null;
-  const scopeValue = cookieStore.get(SPOTIFY_GRANTED_SCOPES_COOKIE_NAME)?.value ?? "";
-  const grantedScopes = parseGrantedScopes(scopeValue);
+  const tokenResponseScopeRaw =
+    cookieStore.get(SPOTIFY_TOKEN_SCOPE_RAW_COOKIE_NAME)?.value ?? null;
+  const grantedScopes = parseGrantedScopes(tokenResponseScopeRaw ?? "");
 
-  return { accessToken, grantedScopes };
+  return { accessToken, tokenResponseScopeRaw, grantedScopes };
 }
 
 export async function getSpotifyAccessToken(): Promise<string | null> {
@@ -38,22 +40,6 @@ export function getRequiredPlaylistModifyScope(isPublic: boolean | null): Playli
 function parseGrantedScopes(value: string): string[] {
   if (!value) {
     return [];
-  }
-
-  if (value.startsWith("[")) {
-    try {
-      const parsed = JSON.parse(value) as unknown;
-      if (!Array.isArray(parsed)) {
-        return [];
-      }
-
-      return parsed
-        .filter((scope): scope is string => typeof scope === "string")
-        .map((scope) => scope.trim())
-        .filter(Boolean);
-    } catch {
-      return [];
-    }
   }
 
   return value

@@ -12,7 +12,7 @@ export async function GET() {
     return NextResponse.json({ error: "Not found." }, { status: 404 });
   }
 
-  const { accessToken, grantedScopes } = await getSpotifySession();
+  const { accessToken, grantedScopes, tokenResponseScopeRaw } = await getSpotifySession();
   const hasAccessToken = Boolean(accessToken);
   const tokenPrefix = accessToken ? accessToken.slice(0, 8) : null;
 
@@ -20,6 +20,7 @@ export async function GET() {
     return NextResponse.json({
       hasAccessToken,
       grantedScopes,
+      tokenResponseScopeRaw,
       tokenPrefix,
       meStatus: null,
       meId: null,
@@ -55,6 +56,7 @@ export async function GET() {
   return NextResponse.json({
     hasAccessToken,
     grantedScopes,
+    tokenResponseScopeRaw,
     tokenPrefix,
     meStatus: meResponse.status,
     meId,
