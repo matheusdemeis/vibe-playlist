@@ -1,5 +1,5 @@
 import { formatSpotifyApiErrorMessage } from "../spotify/error";
-import { getRequiredPlaylistModifyScope, hasGrantedScopes } from "../auth/spotify-session";
+import { hasGrantedScopes } from "../auth/spotify-session";
 import { SpotifyClientError, spotifyJson } from "../spotify/client";
 export const SPOTIFY_TRACKS_BATCH_SIZE = 100;
 
@@ -206,10 +206,14 @@ export async function addTracksInBatches(
       { endpoint: `/playlists/${playlistId}` },
     );
   }
-  const requiredScope = getRequiredPlaylistModifyScope(playlist.public);
+  const isPublicPlaylist = playlist.public === true;
+  const requiredScope = isPublicPlaylist
+    ? "playlist-modify-public"
+    : "playlist-modify-private";
   const hasRequiredScope = hasGrantedScopes(grantedScopes, [requiredScope]);
   traceSaveLibrary("spotify_add_tracks_scope_check", {
     playlistPublic: playlist.public,
+    isPublicPlaylist,
     requiredScope,
     grantedScopes,
     hasRequiredScope,
