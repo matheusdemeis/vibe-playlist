@@ -20,6 +20,7 @@ type SavePlaylistRequestBody = {
 type SavePlaylistApiError = {
   error: string;
   code: string;
+  details?: Record<string, unknown>;
 };
 
 type SavePlaylistApiResponse = SavePlaylistResult | SavePlaylistApiError;
@@ -93,6 +94,7 @@ export async function POST(request: NextRequest) {
               ? "Reconnect to grant playlist permissions"
               : error.message,
           code: isOwnerMismatch ? "playlist_owner_mismatch" : shouldReconnect ? "missing_scopes" : error.code,
+          details: error.details,
         },
         { status: error.status },
       );

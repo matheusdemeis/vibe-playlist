@@ -1,6 +1,6 @@
 import { formatSpotifyApiErrorMessage } from "../spotify/error";
 import { getRequiredPlaylistModifyScope, hasGrantedScopes } from "../auth/spotify-session";
-import { SpotifyClientError, spotifyRequest } from "../spotify/client";
+import { SpotifyClientError, spotifyJson } from "../spotify/client";
 export const SPOTIFY_TRACKS_BATCH_SIZE = 100;
 
 type SpotifyCreatePlaylistResponse = {
@@ -36,6 +36,7 @@ export type SavePlaylistResult = {
   playlistId: string;
   playlistUrl: string;
   snapshotId: string | null;
+  tracksAddedCount: number;
   tracksAdded: boolean;
   error?: {
     message: string;
@@ -50,12 +51,13 @@ export class PlaylistSaveError extends Error {
   code: string;
   endpoint?: string;
   body?: string;
+  details?: Record<string, unknown>;
 
   constructor(
     message: string,
     status = 500,
     code = "playlist_save_failed",
-    details?: { endpoint?: string; body?: string },
+    details?: { endpoint?: string; body?: string; extra?: Record<string, unknown> },
   ) {
     super(message);
     this.name = "PlaylistSaveError";
@@ -63,6 +65,7 @@ export class PlaylistSaveError extends Error {
     this.code = code;
     this.endpoint = details?.endpoint;
     this.body = details?.body;
+    this.details = details?.extra;
   }
 }
 
@@ -85,7 +88,7 @@ export async function savePlaylistToSpotify(input: SavePlaylistInput): Promise<S
   });
 
   try {
-    const snapshotId = await addTracksInBatches(
+    const { snapshotId, tracksAddedCount } = await addTracksInBatches(
       sharedAccessToken,
       playlist.id,
       trackUris,
@@ -97,6 +100,7 @@ export async function savePlaylistToSpotify(input: SavePlaylistInput): Promise<S
       playlistId: playlist.id,
       playlistUrl: playlist.external_urls.spotify,
       snapshotId,
+      tracksAddedCount,
       tracksAdded: true,
     };
   } catch (error) {
@@ -110,6 +114,7 @@ export async function savePlaylistToSpotify(input: SavePlaylistInput): Promise<S
       playlistId: playlist.id,
       playlistUrl: playlist.external_urls.spotify,
       snapshotId: null,
+      tracksAddedCount: 0,
       tracksAdded: false,
       error: {
         message,
@@ -130,8 +135,8 @@ export async function addTracksInBatches(
   trackUris: string[],
   batchSize = SPOTIFY_TRACKS_BATCH_SIZE,
   grantedScopes: string[] = [],
-): Promise<string | null> {
-  const validatedTrackUris = buildTrackUris(trackUris);
+): Promise<{ snapshotId: string | null; tracksAddedCount: number }> {
+  const validatedTrackUris = validateTrackUris(trackUris);
   if (validatedTrackUris.length === 0) {
     throw new PlaylistSaveError(
       "At least one valid Spotify track URI is required.",
@@ -149,12 +154,12 @@ export async function addTracksInBatches(
   let me: SpotifyMeResponse;
   let playlist: SpotifyPlaylistResponse;
   try {
-    me = await spotifyRequest<SpotifyMeResponse>({
+    me = await spotifyJson<SpotifyMeResponse>({
       method: "GET",
       path: "/me",
       accessToken,
     });
-    playlist = await spotifyRequest<SpotifyPlaylistResponse>({
+    playlist = await spotifyJson<SpotifyPlaylistResponse>({
       method: "GET",
       path: `/playlists/${playlistId}`,
       accessToken,
@@ -221,11 +226,17 @@ export async function addTracksInBatches(
     });
 
     try {
-      const data = await spotifyRequest<{ snapshot_id?: string }>({
+      const payload = { uris };
+      traceSaveLibrary("spotify_add_tracks_json", {
+        method: "POST",
+        path: endpoint,
+        bodyPreview: JSON.stringify(payload).slice(0, 200),
+      });
+      const data = await spotifyJson<{ snapshot_id?: string }>({
         method: "POST",
         path: endpoint,
         accessToken,
-        json: { uris },
+        json: payload,
       });
       latestSnapshotId = typeof data.snapshot_id === "string" ? data.snapshot_id : latestSnapshotId;
     } catch (error) {
@@ -241,7 +252,10 @@ export async function addTracksInBatches(
     }
   }
 
-  return latestSnapshotId;
+  return {
+    snapshotId: latestSnapshotId,
+    tracksAddedCount: validatedTrackUris.length,
+  };
 }
 
 export function chunkTrackUris(trackUris: string[], batchSize = SPOTIFY_TRACKS_BATCH_SIZE): string[][] {
@@ -279,7 +293,12 @@ async function createPlaylist(
   });
   let createdPlaylist: SpotifyCreatePlaylistResponse;
   try {
-    createdPlaylist = await spotifyRequest<SpotifyCreatePlaylistResponse>({
+    traceSaveLibrary("spotify_create_playlist_json", {
+      method: "POST",
+      path: "/me/playlists",
+      bodyPreview: JSON.stringify(payload).slice(0, 200),
+    });
+    createdPlaylist = await spotifyJson<SpotifyCreatePlaylistResponse>({
       method: "POST",
       path: "/me/playlists",
       accessToken,
@@ -296,7 +315,7 @@ async function createPlaylist(
     }
     throw error;
   }
-  const createdPlaylistMeta = await spotifyRequest<SpotifyPlaylistResponse>({
+  const createdPlaylistMeta = await spotifyJson<SpotifyPlaylistResponse>({
     method: "GET",
     path: `/playlists/${createdPlaylist.id}`,
     accessToken,
@@ -311,9 +330,15 @@ async function createPlaylist(
   if ((createdPlaylistMeta.public === true) !== finalPublic) {
     throw new PlaylistSaveError(
       `Spotify created playlist with unexpected visibility (requested public=${String(finalPublic)}, actual public=${String(createdPlaylistMeta.public)}).`,
-      502,
+      422,
       "spotify_playlist_visibility_mismatch",
-      { endpoint: `/playlists/${createdPlaylist.id}` },
+      {
+        endpoint: `/playlists/${createdPlaylist.id}`,
+        extra: {
+          requestedPublic: finalPublic,
+          actualPublic: createdPlaylistMeta.public,
+        },
+      },
     );
   }
 
@@ -341,6 +366,14 @@ export function buildTrackUris(trackIdentifiers: string[]): string[] {
 }
 
 export const normalizeTrackUris = buildTrackUris;
+export function validateTrackUris(trackUris: string[]): string[] {
+  const normalized = buildTrackUris(trackUris);
+  if (normalized.length === 0) {
+    return [];
+  }
+
+  return normalized.filter((uri) => uri.startsWith("spotify:track:"));
+}
 
 function traceSaveLibrary(event: string, payload: Record<string, unknown>): void {
   if (process.env.NODE_ENV !== "development") {

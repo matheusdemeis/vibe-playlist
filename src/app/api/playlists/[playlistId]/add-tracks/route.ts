@@ -10,8 +10,7 @@ type AddTracksBody = {
 
 type AddTracksSuccess = {
   playlistId: string;
-  snapshotId: string | null;
-  tracksAdded: true;
+  tracksAddedCount: number;
 };
 
 type AddTracksError = {
@@ -61,11 +60,16 @@ export async function POST(
   }
 
   try {
-    const snapshotId = await addTracksInBatches(accessToken, playlistId, trackUris, 100, grantedScopes);
+    const { tracksAddedCount } = await addTracksInBatches(
+      accessToken,
+      playlistId,
+      trackUris,
+      100,
+      grantedScopes,
+    );
     return NextResponse.json<AddTracksSuccess>({
       playlistId,
-      snapshotId,
-      tracksAdded: true,
+      tracksAddedCount,
     });
   } catch (error) {
     if (error instanceof PlaylistSaveError) {
