@@ -73,8 +73,8 @@ export default function Home() {
       }
 
       if (statusResponse.ok) {
-        const data = (await statusResponse.json()) as { scopes?: string[] };
-        setSpotifyScopes(Array.isArray(data.scopes) ? data.scopes : []);
+        const data = (await statusResponse.json()) as { grantedScopes?: string[] };
+        setSpotifyScopes(Array.isArray(data.grantedScopes) ? data.grantedScopes : []);
       } else {
         setSpotifyScopes([]);
       }

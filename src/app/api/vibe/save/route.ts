@@ -6,7 +6,7 @@ import {
 } from "../../../../lib/playlist/save";
 import {
   getSpotifySession,
-  hasRequiredPlaylistScopes,
+  hasGrantedScopes,
   REQUIRED_PLAYLIST_SCOPES,
 } from "@/lib/auth/spotify-session";
 
@@ -25,7 +25,7 @@ type SavePlaylistApiError = {
 type SavePlaylistApiResponse = SavePlaylistResult | SavePlaylistApiError;
 
 export async function POST(request: NextRequest) {
-  const { accessToken, scopes } = await getSpotifySession();
+  const { accessToken, grantedScopes } = await getSpotifySession();
 
   if (!accessToken) {
     return NextResponse.json<SavePlaylistApiResponse>(
@@ -34,11 +34,11 @@ export async function POST(request: NextRequest) {
     );
   }
   traceSave("playlist_scope_check", {
-    scopes,
-    hasRequiredScopes: hasRequiredPlaylistScopes(scopes),
+    grantedScopes,
+    hasRequiredScopes: hasGrantedScopes(grantedScopes, REQUIRED_PLAYLIST_SCOPES),
     requiredScopes: REQUIRED_PLAYLIST_SCOPES,
   });
-  if (!hasRequiredPlaylistScopes(scopes)) {
+  if (!hasGrantedScopes(grantedScopes, REQUIRED_PLAYLIST_SCOPES)) {
     return NextResponse.json<SavePlaylistApiResponse>(
       {
         error: "Reconnect Spotify to grant playlist permissions",

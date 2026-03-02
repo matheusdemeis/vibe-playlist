@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { addTracksInBatches, PlaylistSaveError } from "@/lib/playlist/save";
 import {
   getSpotifySession,
-  hasRequiredPlaylistScopes,
+  hasGrantedScopes,
   REQUIRED_PLAYLIST_SCOPES,
 } from "@/lib/auth/spotify-session";
 
@@ -28,7 +28,7 @@ export async function POST(
   request: NextRequest,
   context: { params: Promise<{ playlistId: string }> },
 ) {
-  const { accessToken, scopes } = await getSpotifySession();
+  const { accessToken, grantedScopes } = await getSpotifySession();
   if (!accessToken) {
     return NextResponse.json<AddTracksError>(
       { error: { message: "You are not connected to Spotify.", status: 401 } },
@@ -36,11 +36,11 @@ export async function POST(
     );
   }
   traceAddTracks("playlist_scope_check", {
-    scopes,
-    hasRequiredScopes: hasRequiredPlaylistScopes(scopes),
+    grantedScopes,
+    hasRequiredScopes: hasGrantedScopes(grantedScopes, REQUIRED_PLAYLIST_SCOPES),
     requiredScopes: REQUIRED_PLAYLIST_SCOPES,
   });
-  if (!hasRequiredPlaylistScopes(scopes)) {
+  if (!hasGrantedScopes(grantedScopes, REQUIRED_PLAYLIST_SCOPES)) {
     return NextResponse.json<AddTracksError>(
       {
         error: {
