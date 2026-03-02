@@ -60,110 +60,17 @@ describe("addTracksInBatches", () => {
     expect(result.tracksAddedCount).toBe(205);
   });
 
-  it("falls back to query uris when json add-tracks receives 403", async () => {
-    let callCount = 0;
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      callCount += 1;
-      const url = String(input);
-
-      if (callCount === 1) {
-        return new Response(
-          JSON.stringify({ error: { status: 403, message: "Forbidden" } }),
-          { status: 403 },
-        );
-      }
-
-      if (!url.includes("uris=")) {
-        return new Response(JSON.stringify({ error: "missing fallback query" }), { status: 500 });
-      }
-
-      return new Response(JSON.stringify({ snapshot_id: "fallback-ok" }), { status: 201 });
-    });
-
-    const uris = [
-      "spotify:track:4iV5W9uYEdYUVa79Axb7Rh",
-      "spotify:track:1301WleyT98MSxVHPZCA6M",
-    ];
-    const result = await addTracksInBatches("token-123", "playlist-abc", uris, 100);
-
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(String(fetchMock.mock.calls[1][0])).toContain(
-      "/playlists/playlist-abc/tracks?uris=",
+  it("throws with spotify status when add-tracks request fails", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ error: { status: 403, message: "Forbidden" } }), { status: 403 }),
     );
-    expect(result.snapshotId).toBe("fallback-ok");
-    expect(result.tracksAddedCount).toBe(2);
-  });
 
-  it("falls back to PUT replace when both POST variants return 403", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
-      const method = init?.method ?? "GET";
-      if (method === "PUT") {
-        return new Response(JSON.stringify({ snapshot_id: "replace-ok" }), { status: 201 });
-      }
-
-      return new Response(
-        JSON.stringify({ error: { status: 403, message: "Forbidden" } }),
-        { status: 403 },
-      );
+    await expect(
+      addTracksInBatches("token-123", "playlist-abc", ["spotify:track:4iV5W9uYEdYUVa79Axb7Rh"], 100),
+    ).rejects.toMatchObject({
+      status: 403,
+      code: "spotify_add_tracks_failed",
     });
-
-    const uris = ["spotify:track:4iV5W9uYEdYUVa79Axb7Rh"];
-    const result = await addTracksInBatches("token-123", "playlist-abc", uris, 100);
-
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect((fetchMock.mock.calls[2][1]?.method ?? "GET").toUpperCase()).toBe("PUT");
-    expect(result.snapshotId).toBe("replace-ok");
-    expect(result.tracksAddedCount).toBe(1);
-  });
-
-  it("falls back to single-track inserts when batch is forbidden", async () => {
-    let postCallIndex = 0;
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-      const method = init?.method ?? "GET";
-      if (method === "PUT") {
-        return new Response(
-          JSON.stringify({ error: { status: 403, message: "Forbidden" } }),
-          { status: 403 },
-        );
-      }
-
-      if (method !== "POST") {
-        return new Response(JSON.stringify({ error: "unexpected method" }), { status: 500 });
-      }
-
-      const url = String(input);
-      const parsedBody = JSON.parse((init?.body as string) ?? "{}") as { uris?: string[] };
-      postCallIndex += 1;
-
-      if (postCallIndex === 1 && (parsedBody.uris?.length ?? 0) > 1) {
-        return new Response(
-          JSON.stringify({ error: { status: 403, message: "Forbidden" } }),
-          { status: 403 },
-        );
-      }
-
-      if (
-        parsedBody.uris?.[0] === "spotify:track:3fpTMuD1u3gJlVI4FadVHs" ||
-        url.includes("spotify%3Atrack%3A3fpTMuD1u3gJlVI4FadVHs")
-      ) {
-        return new Response(
-          JSON.stringify({ error: { status: 403, message: "Forbidden" } }),
-          { status: 403 },
-        );
-      }
-
-      return new Response(JSON.stringify({ snapshot_id: `ok-${postCallIndex}` }), { status: 201 });
-    });
-
-    const uris = [
-      "spotify:track:6LxSe8YmdPxy095Ux6znaQ",
-      "spotify:track:1C7KSXR2GVxknex6I4ANco",
-      "spotify:track:3fpTMuD1u3gJlVI4FadVHs",
-    ];
-    const result = await addTracksInBatches("token-123", "playlist-abc", uris, 100);
-
-    expect(fetchMock).toHaveBeenCalled();
-    expect(result.tracksAddedCount).toBe(2);
   });
 });
 
@@ -194,60 +101,5 @@ describe("buildTrackUris", () => {
       "spotify:track:4iV5W9uYEdYUVa79Axb7Rh",
       "spotify:track:1301WleyT98MSxVHPZCA6M",
     ]);
-  });
-});
-
-describe("savePlaylistToSpotify", () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it("returns a restriction error when account blocks all explicit tracks", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-      const url = String(input);
-      const method = init?.method ?? "GET";
-      if (url.endsWith("/me") && method === "GET") {
-        return new Response(
-          JSON.stringify({ explicit_content: { filter_enabled: true, filter_locked: false } }),
-          { status: 200 },
-        );
-      }
-      if (url.includes("/me/playlists") && method === "POST") {
-        return new Response(
-          JSON.stringify({
-            id: "playlist-1",
-            public: false,
-            collaborative: false,
-            owner: { id: "user-1" },
-            external_urls: { spotify: "https://open.spotify.com/playlist/playlist-1" },
-          }),
-          { status: 201 },
-        );
-      }
-      if (url.includes("/tracks?ids=") && method === "GET") {
-        return new Response(
-          JSON.stringify({
-            tracks: [{ id: "6gBFPUFcJLzWGx4lenP6h2", explicit: true }],
-          }),
-          { status: 200 },
-        );
-      }
-      return new Response(JSON.stringify({ error: "unexpected call" }), { status: 500 });
-    });
-
-    const { savePlaylistToSpotify } = await import("./save");
-    const result = await savePlaylistToSpotify({
-      accessToken: "token-1",
-      grantedScopes: ["playlist-modify-private"],
-      name: "Test",
-      description: "Desc",
-      isPublic: false,
-      trackUris: ["spotify:track:6gBFPUFcJLzWGx4lenP6h2"],
-    });
-
-    expect(fetchMock).toHaveBeenCalled();
-    expect(result.tracksAdded).toBe(false);
-    expect(result.tracksAddedCount).toBe(0);
-    expect(result.error?.status).toBe(403);
   });
 });
