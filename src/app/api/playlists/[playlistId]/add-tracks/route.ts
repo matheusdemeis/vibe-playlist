@@ -1,8 +1,10 @@
-import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 import { addTracksInBatches, PlaylistSaveError } from "@/lib/playlist/save";
-
-const ACCESS_TOKEN_COOKIE_NAME = "spotify_access_token";
+import {
+  getSpotifySession,
+  hasRequiredPlaylistScopes,
+  REQUIRED_PLAYLIST_SCOPES,
+} from "@/lib/auth/spotify-session";
 
 type AddTracksBody = {
   trackUris?: unknown;
@@ -26,14 +28,18 @@ export async function POST(
   request: NextRequest,
   context: { params: Promise<{ playlistId: string }> },
 ) {
-  const cookieStore = await cookies();
-  const accessToken = cookieStore.get(ACCESS_TOKEN_COOKIE_NAME)?.value;
+  const { accessToken, scopes } = await getSpotifySession();
   if (!accessToken) {
     return NextResponse.json<AddTracksError>(
       { error: { message: "You are not connected to Spotify.", status: 401 } },
       { status: 401 },
     );
   }
+  traceAddTracks("playlist_scope_check", {
+    scopes,
+    hasRequiredScopes: hasRequiredPlaylistScopes(scopes),
+    requiredScopes: REQUIRED_PLAYLIST_SCOPES,
+  });
 
   const { playlistId } = await context.params;
   if (!playlistId) {
@@ -98,4 +104,12 @@ function parseTrackUris(value: unknown): string[] {
     .filter((item): item is string => typeof item === "string")
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function traceAddTracks(event: string, payload: Record<string, unknown>): void {
+  if (process.env.NODE_ENV !== "development") {
+    return;
+  }
+
+  console.log(`[TRACE][add-tracks] ${event}`, payload);
 }

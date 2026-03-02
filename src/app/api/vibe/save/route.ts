@@ -1,12 +1,14 @@
-import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 import {
   PlaylistSaveError,
   savePlaylistToSpotify,
   type SavePlaylistResult,
 } from "../../../../lib/playlist/save";
-
-const ACCESS_TOKEN_COOKIE_NAME = "spotify_access_token";
+import {
+  getSpotifySession,
+  hasRequiredPlaylistScopes,
+  REQUIRED_PLAYLIST_SCOPES,
+} from "@/lib/auth/spotify-session";
 
 type SavePlaylistRequestBody = {
   name?: unknown;
@@ -23,8 +25,7 @@ type SavePlaylistApiError = {
 type SavePlaylistApiResponse = SavePlaylistResult | SavePlaylistApiError;
 
 export async function POST(request: NextRequest) {
-  const cookieStore = await cookies();
-  const accessToken = cookieStore.get(ACCESS_TOKEN_COOKIE_NAME)?.value;
+  const { accessToken, scopes } = await getSpotifySession();
 
   if (!accessToken) {
     return NextResponse.json<SavePlaylistApiResponse>(
@@ -32,6 +33,11 @@ export async function POST(request: NextRequest) {
       { status: 401 },
     );
   }
+  traceSave("playlist_scope_check", {
+    scopes,
+    hasRequiredScopes: hasRequiredPlaylistScopes(scopes),
+    requiredScopes: REQUIRED_PLAYLIST_SCOPES,
+  });
 
   let body: SavePlaylistRequestBody;
   try {
