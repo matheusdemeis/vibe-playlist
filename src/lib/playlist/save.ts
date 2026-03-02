@@ -37,9 +37,13 @@ export class PlaylistSaveError extends Error {
 }
 
 export async function savePlaylistToSpotify(input: SavePlaylistInput): Promise<SavePlaylistResult> {
-  const trackUris = dedupeNonEmptyUris(input.trackUris);
+  const trackUris = normalizeTrackUris(input.trackUris);
   if (trackUris.length === 0) {
-    throw new PlaylistSaveError("At least one track URI is required.", 400, "missing_tracks");
+    throw new PlaylistSaveError(
+      "At least one valid Spotify track URI is required.",
+      400,
+      "missing_tracks",
+    );
   }
 
   const playlist = await createPlaylist(input.accessToken, {
@@ -63,7 +67,7 @@ export async function addTracksInBatches(
   trackUris: string[],
   batchSize = SPOTIFY_TRACKS_BATCH_SIZE,
 ): Promise<string | null> {
-  const batches = chunkTrackUris(trackUris, batchSize);
+  const batches = chunkTrackUris(trackUris, Math.min(100, Math.max(1, Math.trunc(batchSize))));
   let latestSnapshotId: string | null = null;
 
   for (const uris of batches) {
@@ -142,8 +146,24 @@ async function spotifyRequest<T>(
   return (await response.json()) as T;
 }
 
-function dedupeNonEmptyUris(trackUris: string[]): string[] {
-  return Array.from(new Set(trackUris.map((uri) => uri.trim()).filter(Boolean)));
+function normalizeTrackUris(trackUris: string[]): string[] {
+  const normalized = trackUris
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .map((value) => {
+      if (value.startsWith("spotify:track:")) {
+        return value;
+      }
+
+      if (/^[A-Za-z0-9]{22}$/.test(value)) {
+        return `spotify:track:${value}`;
+      }
+
+      return null;
+    })
+    .filter((value): value is string => value !== null);
+
+  return Array.from(new Set(normalized));
 }
 
 function traceSaveLibrary(event: string, payload: Record<string, unknown>): void {
