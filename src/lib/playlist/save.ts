@@ -190,6 +190,8 @@ export async function addTracksInBatches(
     };
 
     traceSaveLibrary("spotify_add_tracks_request", {
+      method: "POST",
+      fullUrl,
       playlistId,
       endpoint,
       url: fullUrl,
@@ -197,6 +199,8 @@ export async function addTracksInBatches(
       hasAuthorizationHeader: Boolean(addTracksHeaders.Authorization),
       authTokenLength: accessToken.length,
       hasContentTypeHeader: addTracksHeaders["Content-Type"] === "application/json",
+      rawBodyType: typeof uris,
+      jsonBodyPreview: JSON.stringify({ uris }).slice(0, 200),
     });
 
     const response = await fetch(fullUrl, {
@@ -212,6 +216,7 @@ export async function addTracksInBatches(
       endpoint,
       status: response.status,
       wwwAuthenticate: response.headers.get("WWW-Authenticate"),
+      bodyText: rawBody,
     });
 
     if (!response.ok) {
@@ -263,14 +268,45 @@ async function createPlaylist(
     public: finalPublic,
   };
   traceSaveLibrary("spotify_create_playlist_request", {
-    endpoint: "/me/playlists",
-    public: payload.public,
-  });
-
-  const createdPlaylist = await spotifyRequest<SpotifyCreatePlaylistResponse>("/me/playlists", accessToken, {
     method: "POST",
+    url: `${SPOTIFY_API_BASE_URL}/me/playlists`,
+    endpoint: "/me/playlists",
+    headers: {
+      Authorization: "[REDACTED]",
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    rawBodyType: typeof payload,
+    jsonBodyPreview: JSON.stringify(payload).slice(0, 200),
+  });
+  const createResponse = await fetch(`${SPOTIFY_API_BASE_URL}/me/playlists`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
     body: JSON.stringify(payload),
   });
+  const createResponseBodyText = await createResponse.text();
+  traceSaveLibrary("spotify_create_playlist_response", {
+    endpoint: "/me/playlists",
+    status: createResponse.status,
+    bodyText: createResponseBodyText,
+  });
+  if (!createResponse.ok) {
+    throw new PlaylistSaveError(
+      formatSpotifyApiErrorMessage(
+        createResponse.status,
+        createResponseBodyText,
+        createResponse.headers,
+      ),
+      createResponse.status,
+      "spotify_save_failed",
+      { endpoint: "/me/playlists", body: createResponseBodyText },
+    );
+  }
+  const createdPlaylist = parseJsonSafely(createResponseBodyText) as SpotifyCreatePlaylistResponse;
   const createdPlaylistMeta = await spotifyRequest<SpotifyPlaylistResponse>(
     `/playlists/${createdPlaylist.id}`,
     accessToken,
