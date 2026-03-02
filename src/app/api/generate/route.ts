@@ -149,8 +149,10 @@ export async function POST(request: NextRequest) {
 }
 
 function resolveLimit(value: unknown): number {
-  const parsed = Number.parseInt(String(value ?? ""), 10);
-  if (Number.isNaN(parsed)) {
+  const rawValue =
+    typeof value === "number" || typeof value === "string" ? String(value) : "";
+  const parsed = Number.parseInt(rawValue, 10);
+  if (!Number.isFinite(parsed)) {
     return DEFAULT_TRACK_SEARCH_LIMIT;
   }
 

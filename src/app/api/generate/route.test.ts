@@ -89,4 +89,33 @@ describe("POST /api/generate", () => {
     expect(body.error.message).toContain("at least 2 characters");
     expect(body.error.details.field).toBe("query");
   });
+
+  it("normalizes limit once and clamps to spotify max", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          tracks: {
+            items: [],
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const request = new NextRequest("http://localhost:5000/api/generate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: "spotify_access_token=test-token",
+      },
+      body: JSON.stringify({ query: "Drake", limit: "999" }),
+    });
+
+    const response = await POST(request);
+    expect(response.status).toBe(200);
+    expect(fetchMock.mock.calls[0]?.[0]).toContain("limit=50");
+
+    fetchMock.mockRestore();
+  });
 });
