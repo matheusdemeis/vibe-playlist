@@ -17,6 +17,10 @@ type SpotifyTrackSearchResponse = {
       name: string;
       uri: string;
       preview_url: string | null;
+      is_playable?: boolean;
+      restrictions?: {
+        reason?: string;
+      };
       artists: Array<{ name: string }>;
       album: {
         images: Array<{ url: string }>;
@@ -109,6 +113,7 @@ export async function POST(request: NextRequest) {
     trackSearchParams.set("q", query);
     trackSearchParams.set("type", "track");
     trackSearchParams.set("limit", String(limit));
+    trackSearchParams.set("market", "from_token");
     const finalQueryString = trackSearchParams.toString();
     traceGenerate("spotify_search_query", {
       normalizedLimit: limit,
@@ -123,14 +128,17 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json({
-      tracks: trackSearch.data.tracks.items.map((track) => ({
-        id: track.id,
-        name: track.name,
-        artists: track.artists.map((artist) => artist.name),
-        albumImage: track.album.images[0]?.url ?? null,
-        uri: track.uri,
-        preview_url: track.preview_url,
-      })),
+      tracks: trackSearch.data.tracks.items
+        .filter((track) => track.is_playable !== false)
+        .filter((track) => track.restrictions?.reason !== "market")
+        .map((track) => ({
+          id: track.id,
+          name: track.name,
+          artists: track.artists.map((artist) => artist.name),
+          albumImage: track.album.images[0]?.url ?? null,
+          uri: track.uri,
+          preview_url: track.preview_url,
+        })),
     });
   } catch (error) {
     const message =

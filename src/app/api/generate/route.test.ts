@@ -15,6 +15,7 @@ describe("POST /api/generate", () => {
                 name: "Track One",
                 uri: "spotify:track:1",
                 preview_url: "https://p.scdn.co/mp3-preview/1",
+                is_playable: true,
                 artists: [{ name: "Artist One" }],
                 album: { images: [{ url: "https://i.scdn.co/image/1" }] },
               },
@@ -23,6 +24,7 @@ describe("POST /api/generate", () => {
                 name: "Track Two",
                 uri: "spotify:track:2",
                 preview_url: null,
+                is_playable: false,
                 artists: [{ name: "Artist Two" }],
                 album: { images: [] },
               },
@@ -48,11 +50,11 @@ describe("POST /api/generate", () => {
     };
 
     expect(response.status).toBe(200);
-    expect(body.tracks).toHaveLength(2);
+    expect(body.tracks).toHaveLength(1);
     expect(body.tracks[0]?.id).toBe("track-1");
-    expect(body.tracks[1]?.albumImage).toBeNull();
 
     expect(fetchMock.mock.calls[0]?.[0]).toContain("/v1/search?");
+    expect(fetchMock.mock.calls[0]?.[0]).toContain("market=from_token");
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
     fetchMock.mockRestore();
