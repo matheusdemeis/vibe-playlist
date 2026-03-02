@@ -4,7 +4,7 @@ import {
   PlaylistSaveError,
   savePlaylistToSpotify,
   type SavePlaylistResult,
-} from "@/lib/playlist/save";
+} from "../../../../lib/playlist/save";
 
 const ACCESS_TOKEN_COOKIE_NAME = "spotify_access_token";
 
@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const parseResult = parseSavePayload(body);
+  const parseResult = validateSavePayload(body);
   if (!parseResult.ok) {
     return NextResponse.json<SavePlaylistApiResponse>(
       { error: parseResult.error, code: "invalid_request" },
@@ -75,7 +75,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-function parseSavePayload(payload: SavePlaylistRequestBody):
+export function validateSavePayload(payload: SavePlaylistRequestBody):
   | { ok: true; value: { name: string; description: string; isPublic: boolean; trackUris: string[] } }
   | { ok: false; error: string } {
   const name = typeof payload.name === "string" ? payload.name.trim() : "";

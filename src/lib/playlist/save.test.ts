@@ -24,7 +24,7 @@ describe("addTracksInBatches", () => {
     });
 
     const uris = Array.from({ length: 205 }, (_, index) => `spotify:track:${index + 1}`);
-    await addTracksInBatches("token-123", "playlist-abc", uris, 100);
+    const snapshotId = await addTracksInBatches("token-123", "playlist-abc", uris, 100);
 
     expect(fetchMock).toHaveBeenCalledTimes(3);
 
@@ -43,5 +43,6 @@ describe("addTracksInBatches", () => {
     expect(firstBody.uris).toHaveLength(100);
     expect(secondBody.uris).toHaveLength(100);
     expect(thirdBody.uris).toHaveLength(5);
+    expect(snapshotId).toBe("ok");
   });
 });
