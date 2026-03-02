@@ -132,6 +132,11 @@ export async function savePlaylistToSpotify(input: SavePlaylistInput): Promise<S
         ? error.message
         : "Playlist was created, but tracks failed to add.";
     const status = error instanceof PlaylistSaveError ? error.status : 500;
+    const partialTracksAddedCount =
+      error instanceof PlaylistSaveError &&
+      typeof error.details?.tracksAddedCount === "number"
+        ? error.details.tracksAddedCount
+        : 0;
 
     return {
       playlistId: playlist.id,
@@ -141,7 +146,7 @@ export async function savePlaylistToSpotify(input: SavePlaylistInput): Promise<S
         final: playlist.finalPublic,
       },
       snapshotId: null,
-      tracksAddedCount: 0,
+      tracksAddedCount: partialTracksAddedCount,
       tracksAdded: false,
       warning: playlist.visibilityWarning,
       error: {
@@ -178,6 +183,7 @@ export async function addTracksInBatches(
     Math.min(100, Math.max(1, Math.trunc(batchSize))),
   );
   let latestSnapshotId: string | null = null;
+  let addedCount = 0;
   const endpoint = `/playlists/${playlistId}/tracks`;
   let me: SpotifyMeResponse;
   let playlist: SpotifyPlaylistResponse;
@@ -270,6 +276,7 @@ export async function addTracksInBatches(
         accessToken,
         json: payload,
       });
+      addedCount += uris.length;
       latestSnapshotId = typeof data.snapshot_id === "string" ? data.snapshot_id : latestSnapshotId;
     } catch (error) {
       if (error instanceof SpotifyClientError) {
@@ -277,7 +284,7 @@ export async function addTracksInBatches(
           formatSpotifyApiErrorMessage(error.status, error.bodyText, error.responseHeaders),
           error.status,
           "spotify_add_tracks_failed",
-          { endpoint, body: error.bodyText },
+          { endpoint, body: error.bodyText, extra: { tracksAddedCount: addedCount } },
         );
       }
       throw error;
@@ -286,7 +293,7 @@ export async function addTracksInBatches(
 
   return {
     snapshotId: latestSnapshotId,
-    tracksAddedCount: validatedTrackUris.length,
+    tracksAddedCount: addedCount,
   };
 }
 
