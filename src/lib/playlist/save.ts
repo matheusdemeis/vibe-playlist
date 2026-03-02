@@ -98,10 +98,16 @@ async function createPlaylist(
   accessToken: string,
   input: { name: string; description: string; isPublic: boolean },
 ): Promise<SpotifyCreatePlaylistResponse> {
+  const finalPublic = input.isPublic === true;
+  traceSaveLibrary("final_public_sent_to_spotify", {
+    receivedIsPublic: input.isPublic,
+    finalPublic,
+  });
+
   const payload = {
     name: input.name,
     description: input.description,
-    public: input.isPublic,
+    public: finalPublic,
   };
 
   return spotifyRequest<SpotifyCreatePlaylistResponse>("/me/playlists", accessToken, {
@@ -138,4 +144,12 @@ async function spotifyRequest<T>(
 
 function dedupeNonEmptyUris(trackUris: string[]): string[] {
   return Array.from(new Set(trackUris.map((uri) => uri.trim()).filter(Boolean)));
+}
+
+function traceSaveLibrary(event: string, payload: Record<string, unknown>): void {
+  if (process.env.NODE_ENV === "production") {
+    return;
+  }
+
+  console.log(`[TRACE][save-lib] ${event}`, payload);
 }

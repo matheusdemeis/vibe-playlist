@@ -50,6 +50,10 @@ export async function POST(request: NextRequest) {
       { status: 400 },
     );
   }
+  traceSave("received_public_flag", {
+    raw: body.isPublic,
+    normalized: parseResult.value.isPublic,
+  });
 
   try {
     const result = await savePlaylistToSpotify({
@@ -80,7 +84,7 @@ export function validateSavePayload(payload: SavePlaylistRequestBody):
   | { ok: false; error: string } {
   const name = typeof payload.name === "string" ? payload.name.trim() : "";
   const description = typeof payload.description === "string" ? payload.description.trim() : "";
-  const isPublic = Boolean(payload.isPublic);
+  const isPublic = payload.isPublic === true;
   const trackUris = parseStringArray(payload.trackUris);
 
   if (!name) {
@@ -111,4 +115,12 @@ function parseStringArray(value: unknown): string[] {
     .filter((item): item is string => typeof item === "string")
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function traceSave(event: string, payload: Record<string, unknown>): void {
+  if (process.env.NODE_ENV === "production") {
+    return;
+  }
+
+  console.log(`[TRACE][save] ${event}`, payload);
 }
