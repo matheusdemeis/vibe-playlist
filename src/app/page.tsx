@@ -21,6 +21,7 @@ type ErrorResponse = {
         status?: number;
         details?: unknown;
       };
+  code?: string;
 };
 
 type SavePlaylistResponse = {
@@ -40,6 +41,8 @@ type SaveStatus = "idle" | "saving" | "success" | "error";
 
 export default function Home() {
   const [isConnected, setIsConnected] = useState<boolean | null>(null);
+  const [spotifyScopes, setSpotifyScopes] = useState<string[]>([]);
+  const [showReconnectPrompt, setShowReconnectPrompt] = useState(false);
   const [query, setQuery] = useState("");
   const [limit, setLimit] = useState(25);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -57,18 +60,32 @@ export default function Home() {
 
   useEffect(() => {
     const checkConnection = async () => {
-      const response = await fetch("/api/me", { cache: "no-store" });
-      if (!response.ok) {
+      const [meResponse, statusResponse] = await Promise.all([
+        fetch("/api/me", { cache: "no-store" }),
+        fetch("/api/spotify/status", { cache: "no-store" }),
+      ]);
+
+      if (!meResponse.ok) {
         setIsConnected(false);
-        return;
+      } else {
+        const data = (await meResponse.json()) as { connected: boolean };
+        setIsConnected(data.connected);
       }
 
-      const data = (await response.json()) as { connected: boolean };
-      setIsConnected(data.connected);
+      if (statusResponse.ok) {
+        const data = (await statusResponse.json()) as { scopes?: string[] };
+        setSpotifyScopes(Array.isArray(data.scopes) ? data.scopes : []);
+      } else {
+        setSpotifyScopes([]);
+      }
     };
 
     void checkConnection();
   }, []);
+
+  const hasPlaylistScopes =
+    spotifyScopes.includes("playlist-modify-private") &&
+    spotifyScopes.includes("playlist-modify-public");
 
   const handleGeneratePlaylist = async () => {
     const trimmedQuery = query.trim();
@@ -158,6 +175,9 @@ export default function Home() {
           typeof errorValue === "string"
             ? errorValue
             : errorValue?.message ?? "Could not save playlist.";
+        if ("code" in data && data.code === "missing_scopes") {
+          setShowReconnectPrompt(true);
+        }
         setSaveStatus("error");
         setSaveMessage(errorMessage);
         return;
@@ -248,6 +268,20 @@ export default function Home() {
         >
           Connect Spotify
         </a>
+        {isConnected && !hasPlaylistScopes ? (
+          <div className="w-full rounded-xl border border-amber-200 bg-amber-50 p-4 text-left text-sm text-amber-800">
+            <p className="font-medium">Spotify needs playlist permissions.</p>
+            <p className="mt-1 text-amber-700">
+              Reconnect to grant playlist-modify-private and playlist-modify-public.
+            </p>
+            <a
+              href="/api/auth/reconnect"
+              className="mt-2 inline-flex rounded-full bg-amber-700 px-4 py-2 text-xs font-medium text-white hover:bg-amber-600"
+            >
+              Reconnect Spotify
+            </a>
+          </div>
+        ) : null}
         <div className="flex w-full flex-col gap-3">
           <input
             aria-label="Search query"
@@ -327,9 +361,17 @@ export default function Home() {
           </div>
         ) : null}
         {saveStatus === "error" && saveMessage && !(savedPlaylist && savedPlaylist.tracksAdded === false) ? (
-          <p className="w-full rounded-xl border border-red-200 bg-red-50 p-3 text-left text-sm text-red-700">
-            {saveMessage}
-          </p>
+          <div className="w-full rounded-xl border border-red-200 bg-red-50 p-3 text-left text-sm text-red-700">
+            <p>{saveMessage}</p>
+            {showReconnectPrompt ? (
+              <a
+                href="/api/auth/reconnect"
+                className="mt-2 inline-flex rounded-full bg-red-700 px-4 py-2 text-xs font-medium text-white hover:bg-red-600"
+              >
+                Reconnect Spotify
+              </a>
+            ) : null}
+          </div>
         ) : null}
         {tracks.length > 0 ? (
           <ul className="w-full space-y-2 text-left">
