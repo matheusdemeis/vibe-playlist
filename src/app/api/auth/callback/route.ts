@@ -1,13 +1,12 @@
 import { Buffer } from "node:buffer";
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
+import { getAppBaseUrl, getSpotifyRedirectUri } from "@/lib/config/app-url";
 
 const SPOTIFY_TOKEN_URL = "https://accounts.spotify.com/api/token";
 const STATE_COOKIE_NAME = "spotify_auth_state";
 const ACCESS_TOKEN_COOKIE_NAME = "spotify_access_token";
 const TOKEN_SCOPE_RAW_COOKIE_NAME = "spotify_access_scope_raw";
-const DEFAULT_REDIRECT_URI = "http://127.0.0.1:5000/api/auth/callback";
-const DEFAULT_APP_URL = "http://127.0.0.1:5000";
 
 type SpotifyTokenResponse = {
   access_token: string;
@@ -35,10 +34,8 @@ export async function GET(request: NextRequest) {
 
   const clientId = process.env.SPOTIFY_CLIENT_ID;
   const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
-  const redirectUri = normalizeDevSpotifyUrl(
-    process.env.SPOTIFY_REDIRECT_URI ?? DEFAULT_REDIRECT_URI,
-  );
-  const appUrl = normalizeDevSpotifyUrl(process.env.APP_URL ?? DEFAULT_APP_URL);
+  const redirectUri = getSpotifyRedirectUri();
+  const appUrl = getAppBaseUrl();
 
   if (!clientId || !clientSecret) {
     return NextResponse.json(
@@ -100,21 +97,4 @@ export async function GET(request: NextRequest) {
   });
 
   return response;
-}
-
-function normalizeDevSpotifyUrl(value: string): string {
-  if (process.env.NODE_ENV === "production") {
-    return value;
-  }
-
-  try {
-    const url = new URL(value);
-    if (url.hostname === "localhost" && url.port === "5000") {
-      url.hostname = "127.0.0.1";
-      return url.toString();
-    }
-    return value;
-  } catch {
-    return value;
-  }
 }

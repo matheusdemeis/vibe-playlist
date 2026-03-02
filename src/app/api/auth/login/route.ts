@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
+import { getSpotifyRedirectUri } from "@/lib/config/app-url";
 
 const SPOTIFY_AUTHORIZE_URL = "https://accounts.spotify.com/authorize";
 const STATE_COOKIE_NAME = "spotify_auth_state";
-const DEFAULT_REDIRECT_URI = "http://127.0.0.1:5000/api/auth/callback";
 const SPOTIFY_SCOPES = [
   "playlist-modify-private",
   "playlist-modify-public",
@@ -13,9 +13,7 @@ const SPOTIFY_SCOPES = [
 
 export async function GET(request: NextRequest) {
   const clientId = process.env.SPOTIFY_CLIENT_ID;
-  const redirectUri = normalizeDevSpotifyUrl(
-    process.env.SPOTIFY_REDIRECT_URI ?? DEFAULT_REDIRECT_URI,
-  );
+  const redirectUri = getSpotifyRedirectUri();
 
   if (!clientId) {
     return NextResponse.json({ error: "Missing SPOTIFY_CLIENT_ID." }, { status: 500 });
@@ -41,21 +39,4 @@ export async function GET(request: NextRequest) {
   }
 
   return NextResponse.redirect(`${SPOTIFY_AUTHORIZE_URL}?${params.toString()}`);
-}
-
-function normalizeDevSpotifyUrl(value: string): string {
-  if (process.env.NODE_ENV === "production") {
-    return value;
-  }
-
-  try {
-    const url = new URL(value);
-    if (url.hostname === "localhost" && url.port === "5000") {
-      url.hostname = "127.0.0.1";
-      return url.toString();
-    }
-    return value;
-  } catch {
-    return value;
-  }
 }
