@@ -22,6 +22,11 @@ export type SavePlaylistResult = {
   playlistId: string;
   playlistUrl: string;
   snapshotId: string | null;
+  tracksAdded: boolean;
+  error?: {
+    message: string;
+    status: number;
+  };
 };
 
 export class PlaylistSaveError extends Error {
@@ -52,13 +57,33 @@ export async function savePlaylistToSpotify(input: SavePlaylistInput): Promise<S
     isPublic: input.isPublic,
   });
 
-  const snapshotId = await addTracksInBatches(input.accessToken, playlist.id, trackUris);
+  try {
+    const snapshotId = await addTracksInBatches(input.accessToken, playlist.id, trackUris);
 
-  return {
-    playlistId: playlist.id,
-    playlistUrl: playlist.external_urls.spotify,
-    snapshotId,
-  };
+    return {
+      playlistId: playlist.id,
+      playlistUrl: playlist.external_urls.spotify,
+      snapshotId,
+      tracksAdded: true,
+    };
+  } catch (error) {
+    const message =
+      error instanceof PlaylistSaveError
+        ? error.message
+        : "Playlist was created, but tracks failed to add.";
+    const status = error instanceof PlaylistSaveError ? error.status : 500;
+
+    return {
+      playlistId: playlist.id,
+      playlistUrl: playlist.external_urls.spotify,
+      snapshotId: null,
+      tracksAdded: false,
+      error: {
+        message,
+        status,
+      },
+    };
+  }
 }
 
 export async function addTracksInBatches(

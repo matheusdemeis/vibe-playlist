@@ -27,6 +27,11 @@ type SavePlaylistResponse = {
   playlistId: string;
   playlistUrl: string;
   snapshotId: string | null;
+  tracksAdded: boolean;
+  error?: {
+    message?: string;
+    status?: number;
+  };
 };
 
 type GenerateStatus = "idle" | "loading" | "success" | "error";
@@ -156,9 +161,16 @@ export default function Home() {
         return;
       }
 
-      setSavedPlaylist(data as SavePlaylistResponse);
-      setSaveStatus("success");
-      setSaveMessage("Playlist saved successfully.");
+      const result = data as SavePlaylistResponse;
+      setSavedPlaylist(result);
+      if (result.tracksAdded === false) {
+        const partialMessage = result.error?.message ?? "Playlist created, but tracks failed to add.";
+        setSaveStatus("error");
+        setSaveMessage(`Playlist created, but tracks failed to add. ${partialMessage}`);
+      } else {
+        setSaveStatus("success");
+        setSaveMessage("Playlist saved successfully.");
+      }
       setIsSaveModalOpen(false);
     } catch {
       setSaveStatus("error");
@@ -236,7 +248,20 @@ export default function Home() {
             </a>
           </div>
         ) : null}
-        {saveStatus === "error" && saveMessage ? (
+        {saveStatus === "error" && savedPlaylist && savedPlaylist.tracksAdded === false ? (
+          <div className="w-full rounded-xl border border-amber-200 bg-amber-50 p-4 text-left text-sm text-amber-800">
+            <p className="font-medium">Playlist created, but tracks failed to add.</p>
+            <a
+              href={savedPlaylist.playlistUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-2 inline-flex rounded-full bg-amber-700 px-4 py-2 text-xs font-medium text-white hover:bg-amber-600"
+            >
+              Open in Spotify
+            </a>
+          </div>
+        ) : null}
+        {saveStatus === "error" && saveMessage && !(savedPlaylist && savedPlaylist.tracksAdded === false) ? (
           <p className="w-full rounded-xl border border-red-200 bg-red-50 p-3 text-left text-sm text-red-700">
             {saveMessage}
           </p>
