@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 const SPOTIFY_TOKEN_URL = "https://accounts.spotify.com/api/token";
 const STATE_COOKIE_NAME = "spotify_auth_state";
 const ACCESS_TOKEN_COOKIE_NAME = "spotify_access_token";
+const SCOPES_COOKIE_NAME = "spotify_access_scopes";
 const DEFAULT_REDIRECT_URI = "http://127.0.0.1:5000/api/auth/callback";
 const DEFAULT_APP_URL = "http://127.0.0.1:5000";
 
@@ -12,6 +13,7 @@ type SpotifyTokenResponse = {
   access_token: string;
   expires_in: number;
   token_type: string;
+  scope?: string;
 };
 
 export async function GET(request: NextRequest) {
@@ -67,6 +69,13 @@ export async function GET(request: NextRequest) {
   const response = NextResponse.redirect(appUrl);
 
   response.cookies.set(ACCESS_TOKEN_COOKIE_NAME, data.access_token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: data.expires_in,
+  });
+  response.cookies.set(SCOPES_COOKIE_NAME, data.scope ?? "", {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
