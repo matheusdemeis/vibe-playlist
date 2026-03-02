@@ -31,6 +31,7 @@ type SavePlaylistResponse = {
   error?: {
     message?: string;
     status?: number;
+    endpoint?: string;
   };
 };
 
@@ -52,6 +53,7 @@ export default function Home() {
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [savedPlaylist, setSavedPlaylist] = useState<SavePlaylistResponse | null>(null);
+  const [isRetryingAddTracks, setIsRetryingAddTracks] = useState(false);
 
   useEffect(() => {
     const checkConnection = async () => {
@@ -178,6 +180,60 @@ export default function Home() {
     }
   };
 
+  const handleRetryAddTracks = async () => {
+    if (!savedPlaylist) {
+      return;
+    }
+
+    setIsRetryingAddTracks(true);
+    setSaveStatus("saving");
+    setSaveMessage("Retrying track add...");
+
+    try {
+      const response = await fetch(`/api/playlists/${savedPlaylist.playlistId}/add-tracks`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          trackUris: tracks.map((track) => track.uri),
+        }),
+      });
+
+      const data = (await response.json()) as
+        | { snapshotId: string | null; tracksAdded: boolean; error?: { message?: string } }
+        | ErrorResponse;
+      if (!response.ok || ("tracksAdded" in data && data.tracksAdded !== true)) {
+        const errorValue = "error" in data ? data.error : undefined;
+        const errorMessage =
+          typeof errorValue === "string"
+            ? errorValue
+            : errorValue?.message ?? "Could not add tracks to playlist.";
+        setSaveStatus("error");
+        setSaveMessage(errorMessage);
+        return;
+      }
+
+      setSavedPlaylist((previous) =>
+        previous
+          ? {
+              ...previous,
+              snapshotId: "snapshotId" in data ? data.snapshotId : previous.snapshotId,
+              tracksAdded: true,
+              error: undefined,
+            }
+          : previous,
+      );
+      setSaveStatus("success");
+      setSaveMessage("Tracks added successfully.");
+    } catch {
+      setSaveStatus("error");
+      setSaveMessage("Could not add tracks to playlist.");
+    } finally {
+      setIsRetryingAddTracks(false);
+    }
+  };
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-zinc-50">
       <main className="flex w-full max-w-xl flex-col items-center gap-6 rounded-2xl bg-white p-10 text-center shadow-sm">
@@ -251,11 +307,20 @@ export default function Home() {
         {saveStatus === "error" && savedPlaylist && savedPlaylist.tracksAdded === false ? (
           <div className="w-full rounded-xl border border-amber-200 bg-amber-50 p-4 text-left text-sm text-amber-800">
             <p className="font-medium">Playlist created, but tracks failed to add.</p>
+            {saveMessage ? <p className="mt-1 text-xs text-amber-700">{saveMessage}</p> : null}
+            <button
+              type="button"
+              onClick={() => void handleRetryAddTracks()}
+              disabled={isRetryingAddTracks}
+              className="mt-2 inline-flex rounded-full bg-amber-700 px-4 py-2 text-xs font-medium text-white hover:bg-amber-600 disabled:cursor-not-allowed disabled:bg-amber-300"
+            >
+              {isRetryingAddTracks ? "Retrying..." : "Retry Add Tracks"}
+            </button>
             <a
               href={savedPlaylist.playlistUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="mt-2 inline-flex rounded-full bg-amber-700 px-4 py-2 text-xs font-medium text-white hover:bg-amber-600"
+              className="mt-2 ml-2 inline-flex rounded-full bg-amber-700 px-4 py-2 text-xs font-medium text-white hover:bg-amber-600"
             >
               Open in Spotify
             </a>
