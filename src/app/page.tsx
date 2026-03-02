@@ -28,14 +28,8 @@ type ErrorResponse = {
 type SavePlaylistResponse = {
   playlistId: string;
   playlistUrl: string;
-  snapshotId: string | null;
   tracksAddedCount: number;
-  tracksAdded: boolean;
-  error?: {
-    message?: string;
-    status?: number;
-    endpoint?: string;
-  };
+  visibilityUpdated: boolean;
 };
 
 type GenerateStatus = "idle" | "loading" | "success" | "error";
@@ -58,8 +52,8 @@ export default function Home() {
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [savedPlaylist, setSavedPlaylist] = useState<SavePlaylistResponse | null>(null);
-  const [isRetryingAddTracks, setIsRetryingAddTracks] = useState(false);
   const generateInFlightRef = useRef(false);
+  const saveInFlightRef = useRef(false);
 
   useEffect(() => {
     const checkConnection = async () => {
@@ -152,6 +146,9 @@ export default function Home() {
   };
 
   const handleSavePlaylist = async () => {
+    if (saveInFlightRef.current || saveStatus === "saving") {
+      return;
+    }
     const name = playlistName.trim();
     if (!name) {
       setSaveStatus("error");
@@ -159,6 +156,7 @@ export default function Home() {
       return;
     }
 
+    saveInFlightRef.current = true;
     setSaveStatus("saving");
     setSaveMessage("Saving playlist to Spotify...");
 
@@ -202,74 +200,18 @@ export default function Home() {
 
       const result = data as SavePlaylistResponse;
       setSavedPlaylist(result);
-      if (result.tracksAdded === false) {
-        const partialMessage = result.error?.message ?? "Playlist created, but tracks failed to add.";
-        setSaveStatus("error");
-        setSaveMessage(`Playlist created, but tracks failed to add. ${partialMessage}`);
-      } else {
-        setSaveStatus("success");
-        setSaveMessage("Playlist saved successfully.");
-      }
+      setSaveStatus("success");
+      setSaveMessage(
+        result.visibilityUpdated
+          ? "Playlist saved successfully."
+          : "Playlist saved and tracks added. Visibility update did not apply.",
+      );
       setIsSaveModalOpen(false);
     } catch {
       setSaveStatus("error");
       setSaveMessage("Unexpected error while saving playlist.");
-    }
-  };
-
-  const handleRetryAddTracks = async () => {
-    if (!savedPlaylist) {
-      return;
-    }
-
-    setIsRetryingAddTracks(true);
-    setSaveStatus("saving");
-    setSaveMessage("Retrying track add...");
-
-    try {
-      const response = await fetch(`/api/playlists/${savedPlaylist.playlistId}/add-tracks`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          trackUris: tracks.map((track) => track.uri),
-        }),
-      });
-
-      const data = (await response.json()) as
-        | { tracksAddedCount: number }
-        | ErrorResponse;
-      if (!response.ok) {
-        const errorValue = "error" in data ? data.error : undefined;
-        const errorMessage =
-          typeof errorValue === "string"
-            ? errorValue
-            : errorValue?.message ?? "Could not add tracks to playlist.";
-        setSaveStatus("error");
-        setSaveMessage(errorMessage);
-        return;
-      }
-
-      setSavedPlaylist((previous) =>
-        previous
-          ? {
-              ...previous,
-              tracksAddedCount: "tracksAddedCount" in data ? data.tracksAddedCount : previous.tracksAddedCount,
-              tracksAdded: true,
-              error: undefined,
-            }
-          : previous,
-      );
-      setSaveStatus("success");
-      setSaveMessage(
-        `Tracks added successfully (${ "tracksAddedCount" in data ? data.tracksAddedCount : tracks.length }).`,
-      );
-    } catch {
-      setSaveStatus("error");
-      setSaveMessage("Could not add tracks to playlist.");
     } finally {
-      setIsRetryingAddTracks(false);
+      saveInFlightRef.current = false;
     }
   };
 
@@ -335,6 +277,7 @@ export default function Home() {
             <button
               type="button"
               onClick={handleOpenSaveModal}
+              disabled={saveStatus === "saving"}
               className="mt-3 rounded-full bg-zinc-900 px-4 py-2 text-xs font-medium text-white hover:bg-zinc-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-500"
             >
               Save to Spotify
@@ -347,9 +290,9 @@ export default function Home() {
             <p className="mt-1 text-xs text-emerald-700">
               Tracks added: {savedPlaylist.tracksAddedCount}
             </p>
-            {savedPlaylist.snapshotId ? (
-              <p className="mt-1 text-xs text-emerald-700">Snapshot ID: {savedPlaylist.snapshotId}</p>
-            ) : null}
+            <p className="mt-1 text-xs text-emerald-700">
+              Visibility updated: {savedPlaylist.visibilityUpdated ? "Yes" : "No"}
+            </p>
             <a
               href={savedPlaylist.playlistUrl}
               target="_blank"
@@ -360,29 +303,7 @@ export default function Home() {
             </a>
           </div>
         ) : null}
-        {saveStatus === "error" && savedPlaylist && savedPlaylist.tracksAdded === false ? (
-          <div className="w-full rounded-xl border border-amber-200 bg-amber-50 p-4 text-left text-sm text-amber-800">
-            <p className="font-medium">Playlist created, but tracks failed to add.</p>
-            {saveMessage ? <p className="mt-1 text-xs text-amber-700">{saveMessage}</p> : null}
-            <button
-              type="button"
-              onClick={() => void handleRetryAddTracks()}
-              disabled={isRetryingAddTracks}
-              className="mt-2 inline-flex rounded-full bg-amber-700 px-4 py-2 text-xs font-medium text-white hover:bg-amber-600 disabled:cursor-not-allowed disabled:bg-amber-300"
-            >
-              {isRetryingAddTracks ? "Retrying..." : "Retry Add Tracks"}
-            </button>
-            <a
-              href={savedPlaylist.playlistUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-2 ml-2 inline-flex rounded-full bg-amber-700 px-4 py-2 text-xs font-medium text-white hover:bg-amber-600"
-            >
-              Open in Spotify
-            </a>
-          </div>
-        ) : null}
-        {saveStatus === "error" && saveMessage && !(savedPlaylist && savedPlaylist.tracksAdded === false) ? (
+        {saveStatus === "error" && saveMessage ? (
           <div className="w-full rounded-xl border border-red-200 bg-red-50 p-3 text-left text-sm text-red-700">
             <p>{saveMessage}</p>
             {showReconnectPrompt ? (
