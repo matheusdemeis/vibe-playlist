@@ -31,6 +31,12 @@ type SpotifyTracksLookupResponse = {
   tracks: Array<{ id: string; explicit?: boolean } | null>;
 };
 
+type SpotifySearchTrackLookupResponse = {
+  tracks?: {
+    items?: Array<{ id?: string; explicit?: boolean }>;
+  };
+};
+
 type SavePlaylistInput = {
   accessToken: string;
   grantedScopes: string[];
@@ -309,7 +315,13 @@ async function dropExplicitUrisForFilteredAccounts(
         explicitById.set(track.id, track.explicit === true);
       }
     } catch {
-      return uris;
+      for (const trackId of chunk) {
+        const explicit = await lookupTrackExplicitViaSearch(accessToken, trackId);
+        if (explicit === null) {
+          return uris;
+        }
+        explicitById.set(trackId, explicit);
+      }
     }
   }
 
@@ -320,6 +332,36 @@ async function dropExplicitUrisForFilteredAccounts(
     }
     return explicitById.get(id) !== true;
   });
+}
+
+async function lookupTrackExplicitViaSearch(
+  accessToken: string,
+  trackId: string,
+): Promise<boolean | null> {
+  try {
+    const search = await spotifyJson<SpotifySearchTrackLookupResponse>({
+      method: "GET",
+      path: "/search",
+      accessToken,
+      query: {
+        q: `track:${trackId}`,
+        type: "track",
+        limit: 5,
+        market: "from_token",
+      },
+    });
+
+    const items = search.tracks?.items ?? [];
+    const exact = items.find((item) => item.id === trackId);
+    const selected = exact ?? items[0];
+    if (!selected) {
+      return null;
+    }
+
+    return selected.explicit === true;
+  } catch {
+    return null;
+  }
 }
 
 async function getCurrentSpotifyUser(accessToken: string): Promise<SpotifyMeResponse> {
