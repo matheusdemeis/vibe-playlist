@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { formatSpotifyApiErrorMessage } from "../../../lib/spotify/error";
+import { SpotifyClientError, spotifyRequest as spotifyHttpRequest } from "../../../lib/spotify/client";
 
 const ACCESS_TOKEN_COOKIE_NAME = "spotify_access_token";
-const SPOTIFY_API_BASE_URL = "https://api.spotify.com/v1";
 const DEFAULT_TRACK_SEARCH_LIMIT = 25;
 
 type GenerateRequestBody = {
@@ -36,29 +36,45 @@ async function spotifyRequest<T>(
   accessToken: string,
   init?: RequestInit,
 ): Promise<{ ok: true; data: T } | { ok: false; error: SpotifyRequestFailure }> {
-  const url = `${SPOTIFY_API_BASE_URL}${path}`;
   const method = init?.method ?? "GET";
   traceGenerate("spotify_request_start", {
-    url,
+    path,
     method,
-    headers: {
-      ...(init?.headers ?? {}),
-      Authorization: accessToken ? "Bearer [REDACTED]" : undefined,
-      "Content-Type": "application/json",
-    },
   });
 
-  let response: Response;
   try {
-    response = await fetch(url, {
-      ...init,
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-        ...(init?.headers ?? {}),
-      },
+    const data = await spotifyHttpRequest<T>({
+      method,
+      path,
+      accessToken,
+      headers: init?.headers,
     });
+    traceGenerate("spotify_request_success", { path, method, status: 200 });
+    return { ok: true, data };
   } catch (error) {
+    if (error instanceof SpotifyClientError) {
+      const message = formatSpotifyApiErrorMessage(
+        error.status,
+        error.bodyText,
+        error.responseHeaders,
+      );
+      traceGenerate("spotify_request_error", {
+        path,
+        method,
+        status: error.status,
+        body: error.bodyText,
+        message,
+      });
+      return {
+        ok: false,
+        error: {
+          status: error.status,
+          message,
+          details: { path, method },
+        },
+      };
+    }
+
     return {
       ok: false,
       error: {
@@ -68,29 +84,6 @@ async function spotifyRequest<T>(
       },
     };
   }
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    const message = formatSpotifyApiErrorMessage(response.status, errorText, response.headers);
-    traceGenerate("spotify_request_error", {
-      url,
-      method,
-      status: response.status,
-      body: errorText,
-      message,
-    });
-    return {
-      ok: false,
-      error: {
-        status: response.status,
-        message,
-        details: { url, method },
-      },
-    };
-  }
-
-  traceGenerate("spotify_request_success", { url, method, status: response.status });
-  return { ok: true, data: (await response.json()) as T };
 }
 
 export async function POST(request: NextRequest) {

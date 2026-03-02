@@ -70,10 +70,10 @@ describe("addTracksInBatches", () => {
     expect(secondBody.uris).toHaveLength(100);
     expect(thirdBody.uris).toHaveLength(5);
     expect(firstCallArgs[1]?.method).toBe("POST");
-    expect(firstCallArgs[1]?.headers).toMatchObject({
-      Authorization: "Bearer token-123",
-      "Content-Type": "application/json",
-    });
+    const firstHeaders = firstCallArgs[1]?.headers as Headers;
+    expect(firstHeaders.get("Authorization")).toBe("Bearer token-123");
+    expect(firstHeaders.get("Content-Type")).toBe("application/json");
+    expect(firstHeaders.get("Accept")).toBe("application/json");
     expect(snapshotId).toBe("ok");
   });
 });

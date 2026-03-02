@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { formatSpotifyApiErrorMessage } from "@/lib/spotify/error";
+import { SpotifyClientError, spotifyRequest } from "@/lib/spotify/client";
 
 const ACCESS_TOKEN_COOKIE_NAME = "spotify_access_token";
-const SPOTIFY_API_BASE_URL = "https://api.spotify.com/v1";
 const DEFAULT_TRACK_LIMIT = 25;
 
 type SearchTracksRequestBody = {
@@ -35,28 +35,34 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Query is required." }, { status: 400 });
   }
 
-  const params = new URLSearchParams({
-    q: query,
-    type: "track",
-    limit: `${DEFAULT_TRACK_LIMIT}`,
-  });
-  const url = `${SPOTIFY_API_BASE_URL}/search?${params.toString()}`;
-
-  const response = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
+  let data: SpotifyTrackSearchResponse;
+  try {
+    data = await spotifyRequest<SpotifyTrackSearchResponse>({
+      method: "GET",
+      path: "/search",
+      accessToken,
+      query: {
+        q: query,
+        type: "track",
+        limit: DEFAULT_TRACK_LIMIT,
+      },
+    });
+  } catch (error) {
+    if (!(error instanceof SpotifyClientError)) {
+      return NextResponse.json({ error: "Failed to reach Spotify API." }, { status: 502 });
+    }
     return NextResponse.json(
-      { error: formatSpotifyApiErrorMessage(response.status, errorText, response.headers) },
-      { status: response.status === 401 ? 401 : 502 },
+      {
+        error: formatSpotifyApiErrorMessage(
+          error.status,
+          error.bodyText,
+          error.responseHeaders,
+        ),
+      },
+      { status: error.status },
     );
   }
 
-  const data = (await response.json()) as SpotifyTrackSearchResponse;
   return NextResponse.json({
     tracks: data.tracks.items.map((track) => ({
       id: track.id,
