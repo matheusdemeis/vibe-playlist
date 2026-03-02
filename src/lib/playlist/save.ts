@@ -38,6 +38,7 @@ type CreatedPlaylist = {
   url: string;
   requestedPublic: boolean;
   finalPublic: boolean | null;
+  visibilityUpdated: boolean;
 };
 
 export type SavePlaylistResult = {
@@ -94,17 +95,11 @@ export async function savePlaylistToSpotify(input: SavePlaylistInput): Promise<S
     SPOTIFY_TRACKS_BATCH_SIZE,
   );
   void snapshotId;
-  const visibilityUpdated = await updatePlaylistVisibility(
-    sharedAccessToken,
-    playlist.id,
-    playlist.requestedPublic,
-  );
-
   return {
     playlistId: playlist.id,
     playlistUrl: playlist.url,
     tracksAddedCount,
-    visibilityUpdated,
+    visibilityUpdated: playlist.visibilityUpdated,
   };
 }
 
@@ -302,15 +297,21 @@ async function createPlaylist(
       external_urls: createdPlaylist.external_urls ?? null,
     },
   });
+  const visibilityUpdated = await enforceVisibilityAfterCreate(
+    accessToken,
+    createdPlaylist.id,
+    finalPublic,
+  );
   return {
     id: createdPlaylist.id,
     url: createdPlaylist.external_urls.spotify,
     requestedPublic: finalPublic,
     finalPublic: createdPlaylist.public ?? finalPublic,
+    visibilityUpdated,
   };
 }
 
-async function updatePlaylistVisibility(
+async function enforceVisibilityAfterCreate(
   accessToken: string,
   playlistId: string,
   requestedPublic: boolean,
@@ -322,10 +323,23 @@ async function updatePlaylistVisibility(
       accessToken,
       json: { public: requestedPublic },
     });
-    return true;
+    await wait(1500);
+    const refreshedPlaylist = await spotifyJson<SpotifyCreatePlaylistResponse>({
+      method: "GET",
+      path: `/playlists/${playlistId}`,
+      accessToken,
+    });
+    const confirmed = refreshedPlaylist.public === requestedPublic;
+    traceSaveLibrary("spotify_visibility_post_create_check", {
+      playlistId,
+      requestedPublic,
+      observedPublic: refreshedPlaylist.public ?? null,
+      confirmed,
+    });
+    return confirmed;
   } catch (error) {
     if (error instanceof SpotifyClientError) {
-      traceSaveLibrary("spotify_visibility_update_warning", {
+      traceSaveLibrary("spotify_visibility_post_create_warning", {
         playlistId,
         requestedPublic,
         status: error.status,
