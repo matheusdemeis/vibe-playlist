@@ -23,7 +23,14 @@ type ErrorResponse = {
       };
 };
 
+type SavePlaylistResponse = {
+  playlistId: string;
+  playlistUrl: string;
+  snapshotId: string | null;
+};
+
 type GenerateStatus = "idle" | "loading" | "success" | "error";
+type SaveStatus = "idle" | "saving" | "success" | "error";
 
 export default function Home() {
   const [isConnected, setIsConnected] = useState<boolean | null>(null);
@@ -37,6 +44,9 @@ export default function Home() {
   const [playlistName, setPlaylistName] = useState("");
   const [playlistDescription, setPlaylistDescription] = useState("Generated with Vibe Playlist");
   const [isPublicPlaylist, setIsPublicPlaylist] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [savedPlaylist, setSavedPlaylist] = useState<SavePlaylistResponse | null>(null);
 
   useEffect(() => {
     const checkConnection = async () => {
@@ -104,7 +114,56 @@ export default function Home() {
     setPlaylistName(trimmedQuery ? `${trimmedQuery} • Vibe Playlist` : fallbackName);
     setPlaylistDescription("Generated with Vibe Playlist");
     setIsPublicPlaylist(false);
+    setSaveStatus("idle");
+    setSaveMessage(null);
     setIsSaveModalOpen(true);
+  };
+
+  const handleSavePlaylist = async () => {
+    const name = playlistName.trim();
+    if (!name) {
+      setSaveStatus("error");
+      setSaveMessage("Playlist name is required.");
+      return;
+    }
+
+    setSaveStatus("saving");
+    setSaveMessage("Saving playlist to Spotify...");
+
+    try {
+      const response = await fetch("/api/vibe/save", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name,
+          description: playlistDescription.trim(),
+          isPublic: isPublicPlaylist,
+          trackUris: tracks.map((track) => track.uri),
+        }),
+      });
+
+      const data = (await response.json()) as SavePlaylistResponse | ErrorResponse;
+      if (!response.ok) {
+        const errorValue = "error" in data ? data.error : undefined;
+        const errorMessage =
+          typeof errorValue === "string"
+            ? errorValue
+            : errorValue?.message ?? "Could not save playlist.";
+        setSaveStatus("error");
+        setSaveMessage(errorMessage);
+        return;
+      }
+
+      setSavedPlaylist(data as SavePlaylistResponse);
+      setSaveStatus("success");
+      setSaveMessage("Playlist saved successfully.");
+      setIsSaveModalOpen(false);
+    } catch {
+      setSaveStatus("error");
+      setSaveMessage("Unexpected error while saving playlist.");
+    }
   };
 
   return (
@@ -158,6 +217,24 @@ export default function Home() {
               Save to Spotify
             </button>
           </div>
+        ) : null}
+        {saveStatus === "success" && savedPlaylist ? (
+          <div className="w-full rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-left text-sm text-emerald-800">
+            <p className="font-medium">{playlistName.trim() || "Playlist"} saved to Spotify.</p>
+            <a
+              href={savedPlaylist.playlistUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-2 inline-flex rounded-full bg-emerald-700 px-4 py-2 text-xs font-medium text-white hover:bg-emerald-600"
+            >
+              Open in Spotify
+            </a>
+          </div>
+        ) : null}
+        {saveStatus === "error" && saveMessage ? (
+          <p className="w-full rounded-xl border border-red-200 bg-red-50 p-3 text-left text-sm text-red-700">
+            {saveMessage}
+          </p>
         ) : null}
         {tracks.length > 0 ? (
           <ul className="w-full space-y-2 text-left">
@@ -236,18 +313,22 @@ export default function Home() {
               <button
                 type="button"
                 onClick={() => setIsSaveModalOpen(false)}
+                disabled={saveStatus === "saving"}
                 className="rounded-full border border-zinc-300 px-4 py-2 text-sm text-zinc-700 hover:bg-zinc-100"
               >
                 Cancel
               </button>
               <button
                 type="button"
-                disabled
-                className="rounded-full bg-zinc-300 px-4 py-2 text-sm text-white"
+                onClick={() => void handleSavePlaylist()}
+                disabled={saveStatus === "saving"}
+                className="rounded-full bg-zinc-900 px-4 py-2 text-sm text-white hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-300"
               >
-                Save Playlist
+                {saveStatus === "saving" ? "Saving..." : "Save Playlist"}
               </button>
             </div>
+
+            {saveMessage ? <p className="text-sm text-zinc-600">{saveMessage}</p> : null}
           </div>
         </div>
       ) : null}
