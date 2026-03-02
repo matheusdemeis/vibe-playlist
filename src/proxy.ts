@@ -1,18 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const DEV_LOCALHOST_HOST = "localhost:5000";
-const DEV_CANONICAL_ORIGIN = "http://127.0.0.1:5000";
-
 export function proxy(request: NextRequest) {
   if (process.env.NODE_ENV === "production") {
     return NextResponse.next();
   }
 
-  if (request.nextUrl.host !== DEV_LOCALHOST_HOST) {
+  if (request.nextUrl.hostname !== "localhost" || request.nextUrl.port !== "5000") {
     return NextResponse.next();
   }
 
-  const redirectUrl = new URL(request.nextUrl.pathname + request.nextUrl.search, DEV_CANONICAL_ORIGIN);
+  const redirectUrl = new URL(request.url);
+  redirectUrl.hostname = "127.0.0.1";
+
+  if (redirectUrl.href === request.url) {
+    return NextResponse.next();
+  }
+
   return NextResponse.redirect(redirectUrl, 307);
 }
 
