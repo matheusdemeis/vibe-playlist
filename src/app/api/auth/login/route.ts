@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { cookies } from "next/headers";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 const SPOTIFY_AUTHORIZE_URL = "https://accounts.spotify.com/authorize";
 const STATE_COOKIE_NAME = "spotify_auth_state";
@@ -11,7 +11,7 @@ const SPOTIFY_SCOPES = [
   "user-read-private",
 ].join(" ");
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const clientId = process.env.SPOTIFY_CLIENT_ID;
   const redirectUri = process.env.SPOTIFY_REDIRECT_URI ?? DEFAULT_REDIRECT_URI;
 
@@ -34,6 +34,9 @@ export async function GET() {
     scope: SPOTIFY_SCOPES,
     state,
   });
+  if (request.nextUrl.searchParams.get("show_dialog") === "1") {
+    params.set("show_dialog", "true");
+  }
 
   return NextResponse.redirect(`${SPOTIFY_AUTHORIZE_URL}?${params.toString()}`);
 }

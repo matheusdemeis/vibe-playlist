@@ -38,6 +38,15 @@ export async function POST(request: NextRequest) {
     hasRequiredScopes: hasRequiredPlaylistScopes(scopes),
     requiredScopes: REQUIRED_PLAYLIST_SCOPES,
   });
+  if (!hasRequiredPlaylistScopes(scopes)) {
+    return NextResponse.json<SavePlaylistApiResponse>(
+      {
+        error: "Reconnect Spotify to grant playlist permissions",
+        code: "missing_scopes",
+      },
+      { status: 403 },
+    );
+  }
 
   let body: SavePlaylistRequestBody;
   try {
@@ -72,8 +81,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json<SavePlaylistApiResponse>(result);
   } catch (error) {
     if (error instanceof PlaylistSaveError) {
+      const shouldReconnect = error.status === 403;
       return NextResponse.json<SavePlaylistApiResponse>(
-        { error: error.message, code: error.code },
+        {
+          error: shouldReconnect
+            ? "Reconnect Spotify to grant playlist permissions"
+            : error.message,
+          code: shouldReconnect ? "missing_scopes" : error.code,
+        },
         { status: error.status },
       );
     }

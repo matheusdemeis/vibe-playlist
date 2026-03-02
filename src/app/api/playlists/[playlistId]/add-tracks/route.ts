@@ -40,6 +40,17 @@ export async function POST(
     hasRequiredScopes: hasRequiredPlaylistScopes(scopes),
     requiredScopes: REQUIRED_PLAYLIST_SCOPES,
   });
+  if (!hasRequiredPlaylistScopes(scopes)) {
+    return NextResponse.json<AddTracksError>(
+      {
+        error: {
+          message: "Reconnect Spotify to grant playlist permissions",
+          status: 403,
+        },
+      },
+      { status: 403 },
+    );
+  }
 
   const { playlistId } = await context.params;
   if (!playlistId) {
@@ -76,10 +87,13 @@ export async function POST(
     });
   } catch (error) {
     if (error instanceof PlaylistSaveError) {
+      const shouldReconnect = error.status === 403;
       return NextResponse.json<AddTracksError>(
         {
           error: {
-            message: error.message,
+            message: shouldReconnect
+              ? "Reconnect Spotify to grant playlist permissions"
+              : error.message,
             status: error.status,
             endpoint: error.endpoint,
           },
