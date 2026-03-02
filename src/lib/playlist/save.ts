@@ -193,8 +193,7 @@ export async function addTracksInBatches(
       endpoint,
       status: response.status,
       wwwAuthenticate: response.headers.get("WWW-Authenticate"),
-      bodyText: rawBody,
-      bodyJson: parsedBody,
+      bodySummary: summarizeSpotifyBody(rawBody, parsedBody),
     });
 
     if (!response.ok) {
@@ -318,4 +317,25 @@ function parseJsonSafely(value: string): unknown {
   } catch {
     return null;
   }
+}
+
+function summarizeSpotifyBody(rawBody: string, parsedBody: unknown): string {
+  if (
+    parsedBody &&
+    typeof parsedBody === "object" &&
+    "error" in parsedBody &&
+    typeof (parsedBody as { error?: unknown }).error === "object" &&
+    (parsedBody as { error?: Record<string, unknown> }).error
+  ) {
+    const error = (parsedBody as { error: Record<string, unknown> }).error;
+    const status = typeof error.status === "number" ? error.status : undefined;
+    const message = typeof error.message === "string" ? error.message : undefined;
+    return status && message ? `${status}: ${message}` : message ?? rawBody.slice(0, 160);
+  }
+
+  if (rawBody.length <= 160) {
+    return rawBody;
+  }
+
+  return `${rawBody.slice(0, 157)}...`;
 }
