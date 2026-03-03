@@ -85,8 +85,11 @@ export class PlaylistSaveError extends Error {
 
 export async function savePlaylistToSpotify(input: SavePlaylistInput): Promise<SavePlaylistResult> {
   const sharedAccessToken = input.accessToken;
-  traceSaveLibrary("spotify_save_scope_context", {
+  console.log("[save] starting save", {
+    tokenTail: sharedAccessToken.slice(-6),
     grantedScopes: input.grantedScopes,
+    isPublic: input.isPublic,
+    trackCount: input.trackUris.length,
   });
 
   const trackUris = buildTrackUris(input.trackUris);
@@ -366,17 +369,28 @@ async function lookupTrackExplicitViaSearch(
 
 async function getCurrentSpotifyUser(accessToken: string): Promise<SpotifyMeResponse> {
   try {
-    return await spotifyJson<SpotifyMeResponse>({
+    const me = await spotifyJson<SpotifyMeResponse>({
       method: "GET",
       path: "/me",
       accessToken,
     });
+    console.log("[save] /me identity", { meId: me.id, tokenTail: accessToken.slice(-6) });
+    return me;
   } catch (error) {
     if (error instanceof SpotifyClientError) {
+      const isForbidden = error.status === 403;
+      const message = isForbidden
+        ? "Spotify returned 403 on /me. If your app is in Development Mode, add your account at developer.spotify.com/dashboard → App → User Management."
+        : "Spotify user token is invalid for track operations. Reconnect Spotify.";
+      console.error("[save] /me failed", {
+        status: error.status,
+        tokenTail: accessToken.slice(-6),
+        body: error.bodyText,
+      });
       throw new PlaylistSaveError(
-        "Spotify user token is invalid for track operations. Reconnect Spotify.",
+        message,
         error.status,
-        "spotify_me_failed",
+        isForbidden ? "spotify_dev_mode_forbidden" : "spotify_me_failed",
         { endpoint: error.path, body: error.bodyText },
       );
     }
@@ -395,20 +409,34 @@ async function logPlaylistOwnershipForForbidden(
       path: `/playlists/${playlistId}`,
       accessToken,
     });
-    traceSaveLibrary("spotify_add_tracks_forbidden_context", {
+    const ownerMatchesMe = playlist.owner?.id === meId;
+    console.error("[save] 403 ownership context", {
       meId,
       playlistId,
       playlistOwnerId: playlist.owner?.id ?? null,
-      ownerMatchesMe: playlist.owner?.id === meId,
+      ownerMatchesMe,
       collaborative: playlist.collaborative ?? null,
       public: playlist.public ?? null,
+      tokenTail: accessToken.slice(-6),
     });
+    if (!ownerMatchesMe) {
+      throw new PlaylistSaveError(
+        "The connected Spotify account does not own this playlist.",
+        403,
+        "playlist_owner_mismatch",
+        { endpoint: `/playlists/${playlistId}` },
+      );
+    }
   } catch (error) {
+    if (error instanceof PlaylistSaveError) {
+      throw error;
+    }
     if (error instanceof SpotifyClientError) {
-      traceSaveLibrary("spotify_add_tracks_forbidden_context_failed", {
+      console.error("[save] 403 ownership context fetch failed", {
         playlistId,
         status: error.status,
         endpoint: error.path,
+        tokenTail: accessToken.slice(-6),
       });
       return;
     }
