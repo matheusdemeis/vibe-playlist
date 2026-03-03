@@ -132,8 +132,6 @@ export async function POST(request: NextRequest) {
       tracks: trackSearch.data.tracks.items
         .filter((track) => track.is_playable !== false)
         .filter((track) => !track.restrictions?.reason)
-        // Some accounts block explicit tracks at add-to-playlist time with 403.
-        .filter((track) => track.explicit !== true)
         .map((track) => ({
           id: track.id,
           name: track.name,
