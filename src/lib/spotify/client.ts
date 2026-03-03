@@ -63,6 +63,7 @@ export async function spotifyJson<T>(options: SpotifyJsonOptions): Promise<T> {
       method,
       endpoint: path,
       status: response.status,
+      tokenTail: options.accessToken.slice(-6),
       bodyExcerpt: excerpt(responseBodyText),
       responseHeaders: {
         wwwAuthenticate: response.headers.get("www-authenticate"),
@@ -80,6 +81,15 @@ export async function spotifyJson<T>(options: SpotifyJsonOptions): Promise<T> {
       url,
       bodyText: responseBodyText,
       responseHeaders: response.headers,
+    });
+  }
+
+  if (method !== "GET") {
+    traceSpotifyHttp("ok", {
+      method,
+      endpoint: path,
+      status: response.status,
+      tokenTail: options.accessToken.slice(-6),
     });
   }
 
