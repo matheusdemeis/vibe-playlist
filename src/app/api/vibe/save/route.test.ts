@@ -16,17 +16,17 @@ describe("validateSavePayload", () => {
     }
   });
 
-  it("fails when trackUris length exceeds 100", () => {
+  it("fails when trackUris length exceeds 300", () => {
     const result = validateSavePayload({
       name: "My Playlist",
       description: "desc",
       isPublic: false,
-      trackUris: Array.from({ length: 101 }, (_, index) => `spotify:track:${index + 1}`),
+      trackUris: Array.from({ length: 301 }, (_, index) => `spotify:track:${index + 1}`),
     });
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.error).toContain("between 1 and 100");
+      expect(result.error).toContain("between 1 and 300");
     }
   });
 
