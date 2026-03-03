@@ -137,10 +137,13 @@ function redactHeaders(headers: Headers): Record<string, string> {
 }
 
 function traceSpotifyHttp(event: string, payload: Record<string, unknown>): void {
-  if (process.env.NODE_ENV !== "development") {
+  if (event === "error") {
+    console.error(`[spotify-http] ${event}`, payload);
     return;
   }
-
+  if (process.env.SPOTIFY_DEBUG !== "1") {
+    return;
+  }
   console.log(`[TRACE][spotify-http] ${event}`, payload);
 }
 
