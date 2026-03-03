@@ -1,8 +1,20 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 import { POST } from "./route";
+import * as spotifySession from "../../../lib/auth/spotify-session";
+
+vi.mock("../../../lib/auth/spotify-session", () => ({
+  getSpotifySession: vi.fn(),
+}));
 
 describe("POST /api/generate", () => {
+  beforeEach(() => {
+    vi.mocked(spotifySession.getSpotifySession).mockResolvedValue({
+      accessToken: "test-token",
+      grantedScopes: ["playlist-modify-private", "playlist-modify-public", "user-read-private"],
+      tokenResponseScopeRaw: "playlist-modify-private playlist-modify-public user-read-private",
+    });
+  });
   it("calls Spotify search and returns tracks", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch");
     fetchMock.mockResolvedValueOnce(

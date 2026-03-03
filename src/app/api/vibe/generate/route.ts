@@ -1,4 +1,3 @@
-import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 import {
   generatePlaylistTracks,
@@ -7,8 +6,7 @@ import {
   type GeneratePlaylistTracksInput,
 } from "@/lib/playlist/generate";
 import { TEMPO_OPTIONS, type TempoOption } from "@/lib/vibe-builder";
-
-const ACCESS_TOKEN_COOKIE_NAME = "spotify_access_token";
+import { getSpotifySession } from "@/lib/auth/spotify-session";
 
 type GenerateVibeApiError = {
   error: string;
@@ -18,8 +16,7 @@ type GenerateVibeApiError = {
 type GenerateVibeApiResponse = PlaylistGenerationResponse | GenerateVibeApiError;
 
 export async function POST(request: NextRequest) {
-  const cookieStore = await cookies();
-  const accessToken = cookieStore.get(ACCESS_TOKEN_COOKIE_NAME)?.value;
+  const { accessToken } = await getSpotifySession();
 
   if (!accessToken) {
     return NextResponse.json<GenerateVibeApiResponse>(

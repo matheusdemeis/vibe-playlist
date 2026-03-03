@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { formatSpotifyApiErrorMessage } from "../../../lib/spotify/error";
 import { SpotifyClientError, spotifyRequest as spotifyHttpRequest } from "../../../lib/spotify/client";
+import { getSpotifySession } from "../../../lib/auth/spotify-session";
 
-const ACCESS_TOKEN_COOKIE_NAME = "spotify_access_token";
 const DEFAULT_TRACK_SEARCH_LIMIT = 25;
 
 type GenerateRequestBody = {
@@ -96,7 +96,7 @@ export async function POST(request: NextRequest) {
     method: request.method,
     url: request.url,
   });
-  const accessToken = request.cookies.get(ACCESS_TOKEN_COOKIE_NAME)?.value;
+  const { accessToken } = await getSpotifySession();
   if (!accessToken) {
     return jsonError(401, "You are not connected to Spotify. Please log in first.");
   }
