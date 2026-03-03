@@ -81,7 +81,17 @@ export async function POST(request: NextRequest) {
       isPublic: parseResult.value.isPublic,
       trackUris: parseResult.value.trackUris,
     });
-    return NextResponse.json<SavePlaylistApiResponse>(result);
+    return NextResponse.json({
+      playlistId: result.playlistId,
+      playlistUrl: result.playlistUrl,
+      snapshotId: null,
+      tracksAddedCount: result.tracksAddedCount,
+      tracksAdded: result.tracksAddedCount > 0,
+      visibility: {
+        requested: parseResult.value.isPublic,
+        final: result.visibilityUpdated ? parseResult.value.isPublic : null,
+      },
+    });
   } catch (error) {
     if (error instanceof PlaylistSaveError) {
       const isOwnerMismatch = error.code === "playlist_owner_mismatch";
