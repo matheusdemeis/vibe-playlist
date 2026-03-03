@@ -9,6 +9,7 @@ import {
   getSpotifySession,
   hasGrantedScopes,
 } from "../../../../lib/auth/spotify-session";
+import { spotifyJson, SpotifyClientError } from "../../../../lib/spotify/client";
 
 type SavePlaylistRequestBody = {
   name?: unknown;
@@ -33,6 +34,30 @@ export async function POST(request: NextRequest) {
       { error: "You are not connected to Spotify. Please log in first.", code: "not_authenticated" },
       { status: 401 },
     );
+  }
+
+  // Pre-flight: verify token is valid for this Spotify app before doing any playlist work.
+  try {
+    await spotifyJson<{ id: string }>({ method: "GET", path: "/me", accessToken });
+  } catch (preflightError) {
+    if (preflightError instanceof SpotifyClientError) {
+      const isForbidden = preflightError.status === 403;
+      console.error("[save-route] /me preflight failed", {
+        status: preflightError.status,
+        tokenTail: accessToken.slice(-6),
+        body: preflightError.bodyText,
+      });
+      return NextResponse.json<SavePlaylistApiResponse>(
+        {
+          error: isForbidden
+            ? "Spotify returned 403 on /me. If your Spotify app is in Development Mode, add your account at developer.spotify.com \u2192 App \u2192 User Management, then reconnect."
+            : "Spotify token is invalid. Please reconnect.",
+          code: isForbidden ? "spotify_dev_mode_forbidden" : "not_authenticated",
+        },
+        { status: preflightError.status },
+      );
+    }
+    throw preflightError;
   }
   let body: SavePlaylistRequestBody;
   try {
@@ -96,18 +121,20 @@ export async function POST(request: NextRequest) {
     if (error instanceof PlaylistSaveError) {
       const isOwnerMismatch = error.code === "playlist_owner_mismatch";
       const isAddTracksFailure = error.code === "spotify_add_tracks_failed";
+      const isDevModeForbidden = error.code === "spotify_dev_mode_forbidden" || error.code === "spotify_me_failed";
       const shouldReconnect =
         error.status === 403 &&
         !isOwnerMismatch &&
-        !isAddTracksFailure;
+        !isAddTracksFailure &&
+        !isDevModeForbidden;
       return NextResponse.json<SavePlaylistApiResponse>(
         {
           error: isOwnerMismatch
             ? "Connected Spotify account does not own this playlist. Reconnect and try again."
-            : shouldReconnect
-              ? "Reconnect to grant playlist permissions"
-              : error.message,
-          code: isOwnerMismatch ? "playlist_owner_mismatch" : shouldReconnect ? "missing_scopes" : error.code,
+            : isDevModeForbidden || !shouldReconnect
+              ? error.message
+              : "Reconnect to grant playlist permissions",
+          code: isOwnerMismatch ? "playlist_owner_mismatch" : isDevModeForbidden ? error.code : shouldReconnect ? "missing_scopes" : error.code,
           details: isAddTracksFailure
             ? {
                 ...error.details,
