@@ -290,9 +290,9 @@ async function dropExplicitUrisForFilteredAccounts(
   accessToken: string,
   uris: string[],
 ): Promise<string[]> {
-  const trackIds = uris
-    .map((uri) => extractTrackId(uri))
-    .filter((id): id is string => Boolean(id));
+  const trackIds = Array.from(
+    new Set(uris.map((uri) => extractTrackId(uri)).filter((id): id is string => Boolean(id))),
+  );
   if (trackIds.length === 0) {
     return uris;
   }
