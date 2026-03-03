@@ -44,9 +44,9 @@ describe("addTracksInBatches", () => {
     const secondCallArgs = fetchMock.mock.calls[2];
     const thirdCallArgs = fetchMock.mock.calls[3];
 
-    expect(firstCallArgs[0]).toContain("/playlists/playlist-abc/tracks");
-    expect(secondCallArgs[0]).toContain("/playlists/playlist-abc/tracks");
-    expect(thirdCallArgs[0]).toContain("/playlists/playlist-abc/tracks");
+    expect(firstCallArgs[0]).toContain("/playlists/playlist-abc/items");
+    expect(secondCallArgs[0]).toContain("/playlists/playlist-abc/items");
+    expect(thirdCallArgs[0]).toContain("/playlists/playlist-abc/items");
 
     const firstBody = JSON.parse((firstCallArgs[1]?.body as string) ?? "{}") as { uris: string[] };
     const secondBody = JSON.parse((secondCallArgs[1]?.body as string) ?? "{}") as { uris: string[] };
@@ -70,7 +70,7 @@ describe("addTracksInBatches", () => {
       if (url.endsWith("/me")) {
         return new Response(JSON.stringify({ id: "user-123" }), { status: 200 });
       }
-      if (url.includes("/playlists/playlist-abc") && !url.endsWith("/tracks")) {
+      if (url.includes("/playlists/playlist-abc") && !url.endsWith("/items")) {
         return new Response(
           JSON.stringify({ owner: { id: "user-123" }, collaborative: false, public: false }),
           { status: 200 },
@@ -86,6 +86,54 @@ describe("addTracksInBatches", () => {
       code: "spotify_add_tracks_failed",
     });
     expect(fetchMock).toHaveBeenCalled();
+  });
+
+  it("requests /v1/tracks/{id} on 403 filtering flow", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/me")) {
+        return new Response(JSON.stringify({ id: "user-123" }), { status: 200 });
+      }
+      if (url === "https://api.spotify.com/v1/tracks/4iV5W9uYEdYUVa79Axb7Rh") {
+        return new Response(
+          JSON.stringify({
+            id: "4iV5W9uYEdYUVa79Axb7Rh",
+            explicit: false,
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.includes("/playlists/playlist-abc/items")) {
+        return new Response(JSON.stringify({ error: { status: 403, message: "Forbidden" } }), {
+          status: 403,
+        });
+      }
+      if (url.includes("/playlists/playlist-abc") && !url.endsWith("/items")) {
+        return new Response(
+          JSON.stringify({ owner: { id: "user-123" }, collaborative: false, public: false }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+
+    await expect(
+      addTracksInBatches(
+        "token-123",
+        "playlist-abc",
+        ["spotify:track:4iV5W9uYEdYUVa79Axb7Rh"],
+        100,
+      ),
+    ).rejects.toMatchObject({
+      status: 403,
+      code: "spotify_add_tracks_failed",
+    });
+
+    const tracksLookupCall = fetchMock.mock.calls.find(
+      ([input]) => String(input) === "https://api.spotify.com/v1/tracks/4iV5W9uYEdYUVa79Axb7Rh",
+    );
+    expect(tracksLookupCall).toBeDefined();
+    expect(String(tracksLookupCall?.[0])).toContain("/tracks/4iV5W9uYEdYUVa79Axb7Rh");
   });
 });
 
