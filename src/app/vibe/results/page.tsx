@@ -602,9 +602,17 @@ export default function VibeResultsPage() {
             ) : null}
 
             {saveErrorMessage ? (
-              <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-                {saveErrorMessage}
-              </p>
+              <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                <p>{saveErrorMessage}</p>
+                {saveErrorMessage.toLowerCase().includes("reconnect") ? (
+                  <a
+                    href="/api/auth/reconnect"
+                    className="mt-2 inline-block rounded-full bg-red-700 px-4 py-1.5 text-xs text-white hover:bg-red-600"
+                  >
+                    Reconnect Spotify
+                  </a>
+                ) : null}
+              </div>
             ) : null}
           </div>
         </div>
