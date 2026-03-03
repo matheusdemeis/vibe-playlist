@@ -29,7 +29,11 @@ type SavePlaylistResponse = {
   playlistId: string;
   playlistUrl: string;
   tracksAddedCount: number;
-  visibilityUpdated: boolean;
+  tracksAdded: boolean;
+  visibility: {
+    requested: boolean;
+    final: boolean | null;
+  };
 };
 
 type GenerateStatus = "idle" | "loading" | "success" | "error";
@@ -202,7 +206,7 @@ export default function Home() {
       setSavedPlaylist(result);
       setSaveStatus("success");
       setSaveMessage(
-        result.visibilityUpdated
+        result.visibility.final !== null
           ? "Playlist saved successfully."
           : "Playlist saved and tracks added. Visibility update did not apply.",
       );
@@ -291,7 +295,12 @@ export default function Home() {
               Tracks added: {savedPlaylist.tracksAddedCount}
             </p>
             <p className="mt-1 text-xs text-emerald-700">
-              Visibility updated: {savedPlaylist.visibilityUpdated ? "Yes" : "No"}
+              Visibility:{" "}
+              {savedPlaylist.visibility.final === null
+                ? "Unknown"
+                : savedPlaylist.visibility.final
+                  ? "Public"
+                  : "Private"}
             </p>
             <a
               href={savedPlaylist.playlistUrl}
