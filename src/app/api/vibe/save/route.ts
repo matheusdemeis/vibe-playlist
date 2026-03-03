@@ -139,8 +139,8 @@ export function validateSavePayload(payload: SavePlaylistRequestBody):
     return { ok: false, error: "Playlist name is required." };
   }
 
-  if (trackUris.length < 1 || trackUris.length > 100) {
-    return { ok: false, error: "Track URIs must contain between 1 and 100 items." };
+  if (trackUris.length < 1 || trackUris.length > 300) {
+    return { ok: false, error: "Track URIs must contain between 1 and 300 items." };
   }
 
   return {
