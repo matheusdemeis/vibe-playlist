@@ -57,7 +57,7 @@ export async function POST(request: NextRequest) {
   });
   const meText = await meResponse.text();
 
-  const spotifyResponse = await fetch(`${SPOTIFY_API_BASE}/playlists/${playlistId}/tracks`, {
+  const spotifyResponse = await fetch(`${SPOTIFY_API_BASE}/playlists/${playlistId}/items`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${accessToken}`,

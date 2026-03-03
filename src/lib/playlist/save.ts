@@ -1,6 +1,7 @@
 import { formatSpotifyApiErrorMessage } from "../spotify/error";
 import { SpotifyClientError, spotifyJson } from "../spotify/client";
 export const SPOTIFY_TRACKS_BATCH_SIZE = 100;
+const SPOTIFY_TRACK_DETAILS_CONCURRENCY = 8;
 
 type SpotifyCreatePlaylistResponse = {
   id: string;
@@ -27,14 +28,9 @@ type SpotifyPlaylistMetaResponse = {
   public?: boolean | null;
 };
 
-type SpotifyTracksLookupResponse = {
-  tracks: Array<{ id: string; explicit?: boolean } | null>;
-};
-
-type SpotifySearchTrackLookupResponse = {
-  tracks?: {
-    items?: Array<{ id?: string; explicit?: boolean }>;
-  };
+type SpotifyTrackDetailsResponse = {
+  id?: string;
+  explicit?: boolean;
 };
 
 type SavePlaylistInput = {
@@ -141,7 +137,7 @@ export async function addTracksInBatches(
       "At least one valid Spotify track URI is required.",
       400,
       "missing_tracks",
-      { endpoint: `/playlists/${playlistId}/tracks`, body: '{"uris":[]}' },
+      { endpoint: `/playlists/${playlistId}/items`, body: '{"uris":[]}' },
     );
   }
   const batches = chunkTrackUris(
@@ -150,7 +146,7 @@ export async function addTracksInBatches(
   );
   let latestSnapshotId: string | null = null;
   let addedCount = 0;
-  const endpoint = `/playlists/${playlistId}/tracks`;
+  const endpoint = `/playlists/${playlistId}/items`;
   // /me succeeds only for user tokens from Authorization Code flow.
   const me = await getCurrentSpotifyUser(accessToken);
   if (requestedPublic === false) {
@@ -295,41 +291,33 @@ async function dropExplicitUrisForFilteredAccounts(
   uris: string[],
 ): Promise<string[]> {
   const trackIds = uris
-    .map((uri) => uri.match(/^spotify:track:([A-Za-z0-9]{22})$/)?.[1] ?? null)
+    .map((uri) => extractTrackId(uri))
     .filter((id): id is string => Boolean(id));
   if (trackIds.length === 0) {
     return uris;
   }
 
   const explicitById = new Map<string, boolean>();
-  const chunks = chunkTrackUris(trackIds, 50);
+  const chunks = chunkTrackUris(trackIds, SPOTIFY_TRACK_DETAILS_CONCURRENCY);
   for (const chunk of chunks) {
-    try {
-      const data = await spotifyJson<SpotifyTracksLookupResponse>({
-        method: "GET",
-        path: "/tracks",
-        accessToken,
-        query: { ids: chunk.join(",") },
-      });
-      for (const track of data.tracks) {
-        if (!track?.id) {
-          continue;
-        }
-        explicitById.set(track.id, track.explicit === true);
-      }
-    } catch {
-      for (const trackId of chunk) {
-        const explicit = await lookupTrackExplicitViaSearch(accessToken, trackId);
-        if (explicit === null) {
-          return uris;
-        }
-        explicitById.set(trackId, explicit);
-      }
+    const chunkDetails = await Promise.all(
+      chunk.map(async (trackId) => ({
+        trackId,
+        explicit: await lookupTrackExplicit(accessToken, trackId),
+      })),
+    );
+
+    if (chunkDetails.some((item) => item.explicit === null)) {
+      return uris;
+    }
+
+    for (const item of chunkDetails) {
+      explicitById.set(item.trackId, item.explicit === true);
     }
   }
 
   return uris.filter((uri) => {
-    const id = uri.match(/^spotify:track:([A-Za-z0-9]{22})$/)?.[1];
+    const id = extractTrackId(uri);
     if (!id) {
       return true;
     }
@@ -337,31 +325,30 @@ async function dropExplicitUrisForFilteredAccounts(
   });
 }
 
-async function lookupTrackExplicitViaSearch(
+async function lookupTrackExplicit(
   accessToken: string,
   trackId: string,
 ): Promise<boolean | null> {
   try {
-    const search = await spotifyJson<SpotifySearchTrackLookupResponse>({
+    const track = await spotifyJson<SpotifyTrackDetailsResponse>({
       method: "GET",
-      path: "/search",
+      path: `/tracks/${trackId}`,
       accessToken,
-      query: {
-        q: `track:${trackId}`,
-        type: "track",
-        limit: 5,
-        market: "from_token",
+      onResponse: ({ status, bodyText, url }) => {
+        console.log("[save] spotify /v1/tracks/{id} probe", {
+          endpoint: "/v1/tracks/{id}",
+          trackId,
+          requestUrl: url,
+          status,
+          bodyExcerpt: excerpt(bodyText),
+          tokenTail: accessToken.slice(-6),
+        });
       },
     });
-
-    const items = search.tracks?.items ?? [];
-    const exact = items.find((item) => item.id === trackId);
-    const selected = exact ?? items[0];
-    if (!selected) {
+    if (!track.id) {
       return null;
     }
-
-    return selected.explicit === true;
+    return track.explicit === true;
   } catch {
     return null;
   }
@@ -373,6 +360,14 @@ async function getCurrentSpotifyUser(accessToken: string): Promise<SpotifyMeResp
       method: "GET",
       path: "/me",
       accessToken,
+      onResponse: ({ status, bodyText }) => {
+        console.log("[save] spotify /v1/me probe", {
+          endpoint: "/v1/me",
+          status,
+          bodyExcerpt: excerpt(bodyText),
+          tokenTail: accessToken.slice(-6),
+        });
+      },
     });
     console.log("[save] /me identity", { meId: me.id, tokenTail: accessToken.slice(-6) });
     return me;
@@ -596,4 +591,16 @@ async function wait(ms: number): Promise<void> {
   await new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+function excerpt(value: string): string {
+  return value.length > 220 ? `${value.slice(0, 217)}...` : value;
+}
+
+function extractTrackId(trackUriOrId: string): string | null {
+  const fromUri = trackUriOrId.match(/^spotify:track:([A-Za-z0-9]{22})$/)?.[1];
+  if (fromUri) {
+    return fromUri;
+  }
+  return /^[A-Za-z0-9]{22}$/.test(trackUriOrId) ? trackUriOrId : null;
 }
