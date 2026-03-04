@@ -67,7 +67,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-function parseGeneratePayload(payload: unknown):
+export function parseGeneratePayload(payload: unknown):
   | { ok: true; value: GeneratePlaylistTracksInput }
   | { ok: false; error: string } {
   if (!payload || typeof payload !== "object") {
