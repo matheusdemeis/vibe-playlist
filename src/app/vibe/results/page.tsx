@@ -12,6 +12,8 @@ import {
 } from "@/lib/vibe-builder";
 import type { PlaylistGenerationResponse } from "@/lib/playlist/generate";
 import { addHistoryItem, attachPlaylistToHistory } from "@/lib/storage/vibe-data";
+import { ResultsActionBar } from "@/components/vibe/ResultsActionBar";
+import { TrackList } from "@/components/vibe/TrackList";
 
 type GenerateVibeApiError = {
   error: string;
@@ -423,92 +425,22 @@ export default function VibeResultsPage() {
             </div>
           ) : null}
 
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-sm text-zinc-700">
-              Generated {tracks.length} tracks.
-            </p>
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => void fetchResults()}
-                className="rounded-full border border-zinc-300 px-4 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-500"
-              >
-                Regenerate
-              </button>
-              <button
-                type="button"
-                onClick={handleShuffle}
-                className="rounded-full border border-zinc-300 px-4 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-500"
-              >
-                Shuffle Order
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setSaveErrorMessage(null);
-                  setIsSaveModalOpen(true);
-                }}
-                className="rounded-full bg-zinc-900 px-4 py-2 text-xs font-medium text-white hover:bg-zinc-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-500"
-              >
-                Save to Spotify
-              </button>
-            </div>
-          </div>
+          <ResultsActionBar
+            trackCount={tracks.length}
+            onRegenerate={() => void fetchResults()}
+            onShuffle={handleShuffle}
+            onSave={() => {
+              setSaveErrorMessage(null);
+              setIsSaveModalOpen(true);
+            }}
+          />
 
-          <ul className="space-y-2" aria-live="polite">
-            {tracks.map((track) => (
-              <li
-                key={track.id}
-                className="flex flex-col gap-3 rounded-xl border border-zinc-200 p-3 sm:flex-row sm:items-center"
-              >
-                {track.image ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={track.image}
-                    alt={`${track.album} cover`}
-                    className="h-12 w-12 rounded-md object-cover"
-                  />
-                ) : (
-                  <div className="h-12 w-12 rounded-md bg-zinc-100" />
-                )}
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-zinc-900">{track.name}</p>
-                  <p className="truncate text-xs text-zinc-600">{track.artists.join(", ")}</p>
-                  <div className="mt-1 flex flex-wrap gap-1">
-                    {track.explicit ? (
-                      <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] font-medium text-zinc-700">
-                        Explicit
-                      </span>
-                    ) : null}
-                    {track.preview_url ? (
-                      <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700">
-                        Has Preview
-                      </span>
-                    ) : null}
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => handleToggleLock(track.id)}
-                  aria-pressed={lockedTrackIds.includes(track.id)}
-                  className={`rounded-full border px-3 py-1.5 text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-500 ${
-                    lockedTrackIds.includes(track.id)
-                      ? "border-zinc-900 bg-zinc-900 text-white"
-                      : "border-zinc-300 text-zinc-700 hover:bg-zinc-100"
-                  }`}
-                >
-                  {lockedTrackIds.includes(track.id) ? "Locked" : "Lock"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleRemoveTrack(track.id)}
-                  className="rounded-full border border-zinc-300 px-3 py-1.5 text-xs text-zinc-700 hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-500"
-                >
-                  Remove
-                </button>
-              </li>
-            ))}
-          </ul>
+          <TrackList
+            tracks={tracks}
+            lockedTrackIds={lockedTrackIds}
+            onToggleLock={handleToggleLock}
+            onRemoveTrack={handleRemoveTrack}
+          />
         </section>
       ) : null}
 
