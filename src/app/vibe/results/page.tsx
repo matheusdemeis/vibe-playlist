@@ -378,9 +378,10 @@ export default function VibeResultsPage() {
           <button
             type="button"
             onClick={() => void fetchResults()}
-            className="rounded-full bg-red-400 px-4 py-2 text-zinc-900 hover:bg-red-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-300"
+            disabled={isLoading}
+            className="rounded-full bg-red-400 px-4 py-2 text-zinc-900 hover:bg-red-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-300 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            Retry
+            {isLoading ? "Retrying..." : "Retry"}
           </button>
         </section>
       ) : null}
@@ -431,6 +432,7 @@ export default function VibeResultsPage() {
 
           <ResultsActionBar
             trackCount={tracks.length}
+            isBusy={isLoading || isSavingPlaylist || isRetryingAddTracks}
             onRegenerate={() => void fetchResults()}
             onShuffle={handleShuffle}
             onSave={() => {
