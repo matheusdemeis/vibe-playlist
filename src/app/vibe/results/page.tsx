@@ -342,39 +342,43 @@ export default function VibeResultsPage() {
   }, [lockedTrackIds, tracks]);
 
   return (
-    <main className="rounded-2xl bg-white p-5 shadow-sm sm:p-8">
+    <main className="relative overflow-hidden rounded-3xl border border-zinc-800 bg-zinc-950/90 p-5 shadow-2xl shadow-black/40 sm:p-8">
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -right-28 -top-28 h-64 w-64 rounded-full bg-emerald-500/10 blur-3xl"
+      />
       <header className="mb-6 space-y-2">
-        <h1 className="text-2xl font-semibold text-zinc-900 sm:text-3xl">Vibe Results</h1>
-        <p className="text-sm text-zinc-600 sm:text-base">
+        <h1 className="text-2xl font-semibold text-zinc-100 sm:text-3xl">Vibe Results</h1>
+        <p className="text-sm text-zinc-400 sm:text-base">
           Generated tracks from your current vibe settings.
         </p>
       </header>
 
       {requestParse.error ? (
-        <section className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+        <section className="rounded-xl border border-red-300/30 bg-red-500/10 p-4 text-sm text-red-200">
           {requestParse.error}
         </section>
       ) : null}
 
       {!requestParse.error && isLoading ? (
         <section aria-live="polite" aria-busy="true" className="space-y-3">
-          <p className="text-sm text-zinc-600">Generating tracks...</p>
-          <div className="h-16 animate-pulse rounded-xl bg-zinc-100" />
-          <div className="h-16 animate-pulse rounded-xl bg-zinc-100" />
-          <div className="h-16 animate-pulse rounded-xl bg-zinc-100" />
+          <p className="text-sm text-zinc-400">Generating tracks...</p>
+          <div className="h-16 animate-pulse rounded-xl border border-zinc-800 bg-zinc-900" />
+          <div className="h-16 animate-pulse rounded-xl border border-zinc-800 bg-zinc-900" />
+          <div className="h-16 animate-pulse rounded-xl border border-zinc-800 bg-zinc-900" />
         </section>
       ) : null}
 
       {!requestParse.error && !isLoading && errorMessage ? (
         <section
           aria-live="assertive"
-          className="space-y-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"
+          className="space-y-3 rounded-xl border border-red-300/30 bg-red-500/10 p-4 text-sm text-red-200"
         >
           <p>{errorMessage}</p>
           <button
             type="button"
             onClick={() => void fetchResults()}
-            className="rounded-full bg-red-700 px-4 py-2 text-white hover:bg-red-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-500"
+            className="rounded-full bg-red-400 px-4 py-2 text-zinc-900 hover:bg-red-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-300"
           >
             Retry
           </button>
@@ -382,7 +386,7 @@ export default function VibeResultsPage() {
       ) : null}
 
       {!requestParse.error && !isLoading && !errorMessage && tracks.length === 0 ? (
-        <section className="rounded-xl border border-zinc-200 bg-zinc-50 p-5 text-sm text-zinc-600">
+        <section className="rounded-xl border border-zinc-800 bg-zinc-900/70 p-5 text-sm text-zinc-400">
           No tracks found for this vibe. Try adjusting genres or mood settings and regenerate.
         </section>
       ) : null}
@@ -390,7 +394,7 @@ export default function VibeResultsPage() {
       {!requestParse.error && !isLoading && !errorMessage && tracks.length > 0 ? (
         <section className="space-y-4">
           {saveResult ? (
-            <div className="space-y-2 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
+            <div className="space-y-2 rounded-xl border border-emerald-300/30 bg-emerald-500/10 p-4 text-sm text-emerald-100">
               <p>
                 Playlist saved with{" "}
                 {saveResult.tracksAdded ? saveResult.tracksAddedCount : 0} tracks.
@@ -403,12 +407,12 @@ export default function VibeResultsPage() {
                     ? "Public"
                     : "Private"}
               </p>
-              {saveResult.warning ? <p className="text-amber-700">{saveResult.warning}</p> : null}
+              {saveResult.warning ? <p className="text-amber-200">{saveResult.warning}</p> : null}
               <a
                 href={saveResult.playlistUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex rounded-full bg-emerald-700 px-4 py-2 text-xs font-medium text-white hover:bg-emerald-600"
+                className="inline-flex rounded-full bg-zinc-950 px-4 py-2 text-xs font-medium text-emerald-300 hover:bg-black"
               >
                 Open in Spotify
               </a>
@@ -417,7 +421,7 @@ export default function VibeResultsPage() {
                   type="button"
                   onClick={() => void handleRetryAddTracks()}
                   disabled={isRetryingAddTracks}
-                  className="ml-2 inline-flex rounded-full bg-amber-700 px-4 py-2 text-xs font-medium text-white hover:bg-amber-600 disabled:opacity-60"
+                  className="ml-2 inline-flex rounded-full bg-amber-400 px-4 py-2 text-xs font-semibold text-zinc-900 hover:bg-amber-300 disabled:opacity-60"
                 >
                   {isRetryingAddTracks ? "Retrying..." : "Retry add tracks"}
                 </button>
@@ -447,13 +451,13 @@ export default function VibeResultsPage() {
       <div className="mt-5">
         <Link
           href={queryString ? `/vibe?${queryString}` : "/vibe"}
-          className="inline-flex rounded-full bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-500"
+          className="inline-flex rounded-full border border-zinc-700 bg-zinc-900 px-4 py-2 text-sm font-medium text-zinc-200 hover:bg-zinc-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
         >
           Back to Builder
         </Link>
         <Link
           href="/vibe/history"
-          className="ml-2 inline-flex rounded-full border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-100"
+          className="ml-2 inline-flex rounded-full border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-300 hover:bg-zinc-800"
         >
           View History
         </Link>
@@ -464,30 +468,30 @@ export default function VibeResultsPage() {
           role="dialog"
           aria-modal="true"
           aria-label="Save playlist to Spotify"
-          className="fixed inset-0 z-30 flex items-end justify-center bg-black/30 p-4 sm:items-center"
+          className="fixed inset-0 z-30 flex items-end justify-center bg-black/60 p-4 sm:items-center"
         >
-          <div className="w-full max-w-lg space-y-4 rounded-2xl bg-white p-5 shadow-xl sm:p-6">
+          <div className="w-full max-w-lg space-y-4 rounded-3xl border border-zinc-800 bg-zinc-950 p-5 shadow-2xl sm:p-6">
             <div className="space-y-1">
-              <h2 className="text-lg font-semibold text-zinc-900">Save to Spotify</h2>
-              <p className="text-sm text-zinc-600">
+              <h2 className="text-lg font-semibold text-zinc-100">Save to Spotify</h2>
+              <p className="text-sm text-zinc-400">
                 Edit details before creating the playlist in your account.
               </p>
             </div>
 
             <div className="space-y-2">
-              <label htmlFor="playlist-name" className="text-sm font-medium text-zinc-900">
+              <label htmlFor="playlist-name" className="text-sm font-medium text-zinc-100">
                 Playlist name
               </label>
               <input
                 id="playlist-name"
                 value={playlistName}
                 onChange={(event) => setPlaylistName(event.target.value)}
-                className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm text-zinc-900"
+                className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-zinc-100"
               />
             </div>
 
             <div className="space-y-2">
-              <label htmlFor="playlist-description" className="text-sm font-medium text-zinc-900">
+              <label htmlFor="playlist-description" className="text-sm font-medium text-zinc-100">
                 Description
               </label>
               <textarea
@@ -495,11 +499,11 @@ export default function VibeResultsPage() {
                 value={playlistDescription}
                 onChange={(event) => setPlaylistDescription(event.target.value)}
                 rows={3}
-                className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm text-zinc-900"
+                className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-zinc-100"
               />
             </div>
 
-            <label className="flex items-center gap-2 text-sm text-zinc-900">
+            <label className="flex items-center gap-2 text-sm text-zinc-300">
               <input
                 type="checkbox"
                 checked={isPublicPlaylist}
@@ -513,7 +517,7 @@ export default function VibeResultsPage() {
                 type="button"
                 onClick={() => setIsSaveModalOpen(false)}
                 disabled={isSavingPlaylist}
-                className="rounded-full border border-zinc-300 px-4 py-2 text-sm text-zinc-700 hover:bg-zinc-100"
+                className="rounded-full border border-zinc-700 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800"
               >
                 Cancel
               </button>
@@ -521,25 +525,25 @@ export default function VibeResultsPage() {
                 type="button"
                 onClick={() => void handleSaveToSpotify()}
                 disabled={isSavingPlaylist}
-                className="rounded-full bg-zinc-900 px-4 py-2 text-sm text-white hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-300"
+                className="rounded-full bg-emerald-500 px-4 py-2 text-sm font-semibold text-zinc-950 hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
               >
                 {isSavingPlaylist ? "Saving..." : "Save Playlist"}
               </button>
             </div>
 
             {isSavingPlaylist ? (
-              <p className="text-sm text-zinc-600">
+              <p className="text-sm text-zinc-400">
                 Saving playlist ({tracks.length} tracks)... this may take a few seconds.
               </p>
             ) : null}
 
             {saveErrorMessage ? (
-              <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+              <div className="rounded-lg border border-red-300/30 bg-red-500/10 p-3 text-sm text-red-200">
                 <p>{saveErrorMessage}</p>
                 {saveErrorMessage.toLowerCase().includes("reconnect") ? (
                   <a
                     href="/api/auth/reconnect"
-                    className="mt-2 inline-block rounded-full bg-red-700 px-4 py-1.5 text-xs text-white hover:bg-red-600"
+                    className="mt-2 inline-block rounded-full bg-red-400 px-4 py-1.5 text-xs font-semibold text-zinc-900 hover:bg-red-300"
                   >
                     Reconnect Spotify
                   </a>
