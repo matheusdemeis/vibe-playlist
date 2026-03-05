@@ -1,31 +1,31 @@
 # Spotify Flow Map (Current `main` Behavior)
 
-- OAuth start: [`src/app/page.tsx`](/Users/matheusdemeis/Desktop/vibe-playlist/src/app/page.tsx) `Home` renders a **Connect Spotify** anchor to `/api/auth/login`.
-- OAuth authorize route: [`src/app/api/auth/login/route.ts`](/Users/matheusdemeis/Desktop/vibe-playlist/src/app/api/auth/login/route.ts) `GET` builds Spotify `/authorize` URL with `response_type=code`, `redirect_uri`, and scopes.
-- OAuth scopes source: [`src/app/api/auth/login/route.ts`](/Users/matheusdemeis/Desktop/vibe-playlist/src/app/api/auth/login/route.ts) `SPOTIFY_SCOPES` includes:
+- OAuth start: [`src/app/page.tsx`]`Home` renders a **Connect Spotify** anchor to `/api/auth/login`.
+- OAuth authorize route: [`src/app/api/auth/login/route.ts`](src/app/api/auth/login/route.ts) `GET` builds Spotify `/authorize` URL with `response_type=code`, `redirect_uri`, and scopes.
+- OAuth scopes source: [`src/app/api/auth/login/route.ts`](src/app/api/auth/login/route.ts) `SPOTIFY_SCOPES` includes:
 - `playlist-modify-private`
 - `playlist-modify-public`
 - `user-read-private`
-- OAuth callback: [`src/app/api/auth/callback/route.ts`](/Users/matheusdemeis/Desktop/vibe-playlist/src/app/api/auth/callback/route.ts) `GET` validates `state`, exchanges code at `https://accounts.spotify.com/api/token`.
+- OAuth callback: [`src/app/api/auth/callback/route.ts`](src/app/api/auth/callback/route.ts) `GET` validates `state`, exchanges code at `https://accounts.spotify.com/api/token`.
 - Session/token persistence: callback stores httpOnly cookies `spotify_access_token` and `spotify_access_scope_raw`.
-- Reconnect flow: [`src/app/api/auth/reconnect/route.ts`](/Users/matheusdemeis/Desktop/vibe-playlist/src/app/api/auth/reconnect/route.ts) clears token/scope cookies and redirects to login with `show_dialog=1`.
-- Server token retrieval: [`src/lib/auth/spotify-session.ts`](/Users/matheusdemeis/Desktop/vibe-playlist/src/lib/auth/spotify-session.ts) `getSpotifySession()` reads cookies and parses granted scopes.
-- Connected check endpoint: [`src/app/api/me/route.ts`](/Users/matheusdemeis/Desktop/vibe-playlist/src/app/api/me/route.ts) `GET` returns `connected` from access-token presence.
-- Scope status endpoint: [`src/app/api/spotify/status/route.ts`](/Users/matheusdemeis/Desktop/vibe-playlist/src/app/api/spotify/status/route.ts) `GET` returns granted/missing scopes in development.
-- Spotify HTTP client: [`src/lib/spotify/client.ts`](/Users/matheusdemeis/Desktop/vibe-playlist/src/lib/spotify/client.ts) `spotifyJson()` builds URL under `https://api.spotify.com/v1`, injects `Authorization: Bearer ...`, throws `SpotifyClientError` on non-2xx.
-- Generate (legacy home page): [`src/app/api/generate/route.ts`](/Users/matheusdemeis/Desktop/vibe-playlist/src/app/api/generate/route.ts) `POST` calls `/search?q=...&type=track&limit=...&market=from_token`.
+- Reconnect flow: [`src/app/api/auth/reconnect/route.ts`](src/app/api/auth/reconnect/route.ts) clears token/scope cookies and redirects to login with `show_dialog=1`.
+- Server token retrieval: [`src/lib/auth/spotify-session.ts`](src/lib/auth/spotify-session.ts) `getSpotifySession()` reads cookies and parses granted scopes.
+- Connected check endpoint: [`src/app/api/me/route.ts`](src/app/api/me/route.ts) `GET` returns `connected` from access-token presence.
+- Scope status endpoint: [`src/app/api/spotify/status/route.ts`](src/app/api/spotify/status/route.ts) `GET` returns granted/missing scopes in development.
+- Spotify HTTP client: [`src/lib/spotify/client.ts`](src/lib/spotify/client.ts) `spotifyJson()` builds URL under `https://api.spotify.com/v1`, injects `Authorization: Bearer ...`, throws `SpotifyClientError` on non-2xx.
+- Generate (legacy home page): [`src/app/api/generate/route.ts`](src/app/api/generate/route.ts) `POST` calls `/search?q=...&type=track&limit=...&market=from_token`.
 - `market=from_token` usage: only in `api/generate` search route for market tied to user token context.
-- Generate (vibe flow): [`src/app/vibe/results/page.tsx`](/Users/matheusdemeis/Desktop/vibe-playlist/src/app/vibe/results/page.tsx) `fetchResults()` posts to `/api/vibe/generate`.
-- Vibe generate API: [`src/app/api/vibe/generate/route.ts`](/Users/matheusdemeis/Desktop/vibe-playlist/src/app/api/vibe/generate/route.ts) `POST` requires server session token then calls `generatePlaylistTracks(...)`.
-- Recommendation endpoints: [`src/lib/playlist/generate.ts`](/Users/matheusdemeis/Desktop/vibe-playlist/src/lib/playlist/generate.ts)
+- Generate (vibe flow): [`src/app/vibe/results/page.tsx`](src/app/vibe/results/page.tsx) `fetchResults()` posts to `/api/vibe/generate`.
+- Vibe generate API: [`src/app/api/vibe/generate/route.ts`](src/app/api/vibe/generate/route.ts) `POST` requires server session token then calls `generatePlaylistTracks(...)`.
+- Recommendation endpoints: [`src/lib/playlist/generate.ts`](src/lib/playlist/generate.ts)
 - `fetchRecommendations()` → `GET /v1/recommendations`
 - `fetchAudioFeatures()` → `GET /v1/audio-features?ids=...`
-- Save from home page: [`src/app/page.tsx`](/Users/matheusdemeis/Desktop/vibe-playlist/src/app/page.tsx) `handleSavePlaylist()` posts to `/api/vibe/save`.
-- Save from vibe results: [`src/app/vibe/results/page.tsx`](/Users/matheusdemeis/Desktop/vibe-playlist/src/app/vibe/results/page.tsx) `handleSaveToSpotify()` posts to `/api/vibe/save`; retry uses `/api/playlists/{playlistId}/add-tracks`.
-- Save API route: [`src/app/api/vibe/save/route.ts`](/Users/matheusdemeis/Desktop/vibe-playlist/src/app/api/vibe/save/route.ts) `POST` enforces auth + scopes, does `/me` preflight, then `savePlaylistToSpotify(...)`.
-- Playlist creation endpoint: [`src/lib/playlist/save.ts`](/Users/matheusdemeis/Desktop/vibe-playlist/src/lib/playlist/save.ts) `createPlaylist()` uses `POST /v1/me/playlists`.
-- Add tracks endpoint: [`src/lib/playlist/save.ts`](/Users/matheusdemeis/Desktop/vibe-playlist/src/lib/playlist/save.ts) `addTracksInBatches()` uses `POST /v1/playlists/{id}/items` in chunks of 100.
-- Track detail endpoint (403 filtering path): [`src/lib/playlist/save.ts`](/Users/matheusdemeis/Desktop/vibe-playlist/src/lib/playlist/save.ts) `lookupTrackExplicit()` uses `GET /v1/tracks/{id}`.
-- Retry add-tracks route: [`src/app/api/playlists/[playlistId]/add-tracks/route.ts`](/Users/matheusdemeis/Desktop/vibe-playlist/src/app/api/playlists/[playlistId]/add-tracks/route.ts) validates URIs and calls `addTracksInBatches`.
+- Save from home page: [`src/app/page.tsx`](src/app/page.tsx) `handleSavePlaylist()` posts to `/api/vibe/save`.
+- Save from vibe results: [`src/app/vibe/results/page.tsx`](src/app/vibe/results/page.tsx) `handleSaveToSpotify()` posts to `/api/vibe/save`; retry uses `/api/playlists/{playlistId}/add-tracks`.
+- Save API route: [`src/app/api/vibe/save/route.ts`](src/app/api/vibe/save/route.ts) `POST` enforces auth + scopes, does `/me` preflight, then `savePlaylistToSpotify(...)`.
+- Playlist creation endpoint: [`src/lib/playlist/save.ts`](src/lib/playlist/save.ts) `createPlaylist()` uses `POST /v1/me/playlists`.
+- Add tracks endpoint: [`src/lib/playlist/save.ts`](src/lib/playlist/save.ts) `addTracksInBatches()` uses `POST /v1/playlists/{id}/items` in chunks of 100.
+- Track detail endpoint (403 filtering path): [`src/lib/playlist/save.ts`](src/lib/playlist/save.ts) `lookupTrackExplicit()` uses `GET /v1/tracks/{id}`.
+- Retry add-tracks route: [`src/app/api/playlists/[playlistId]/add-tracks/route.ts`](src/app/api/playlists/[playlistId]/add-tracks/route.ts) validates URIs and calls `addTracksInBatches`.
 - Error handling (server): route handlers map Spotify and validation failures to structured JSON with status + `code`.
-- Error handling (UI): [`src/app/page.tsx`](/Users/matheusdemeis/Desktop/vibe-playlist/src/app/page.tsx) and [`src/app/vibe/results/page.tsx`](/Users/matheusdemeis/Desktop/vibe-playlist/src/app/vibe/results/page.tsx) show inline failure messages, reconnect prompt on missing scopes, and retry actions.
+- Error handling (UI): [`src/app/page.tsx`](src/app/page.tsx) and [`src/app/vibe/results/page.tsx`](src/app/vibe/results/page.tsx) show inline failure messages, reconnect prompt on missing scopes, and retry actions.
