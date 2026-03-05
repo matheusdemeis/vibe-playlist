@@ -21,7 +21,7 @@ If you get a 403 when saving playlists:
 ## Do Not Break Spotify Flow
 
 - Keep Spotify API calls server-side only (`src/app/api/**` and `src/lib/spotify/**`).
-- Do not log raw access tokens. Log booleans/status/endpoint names only.
+- Do not log full/raw access tokens or other sensitive values. Normal logs should stick to booleans, HTTP status codes, and endpoint names; debug logs may include safe metadata such as token tails, selected non-sensitive headers, and small redacted body excerpts for troubleshooting.
 - UI components should remain presentational; they must not call Spotify directly.
 
 Manual checklist after changes:
