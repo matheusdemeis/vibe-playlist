@@ -1,3 +1,5 @@
+import { assertServerOnly } from "../server/assert-server-only";
+
 const SPOTIFY_API_BASE_URL = "https://api.spotify.com/v1";
 
 type QueryParams = Record<string, string | number | boolean | undefined>;
@@ -38,6 +40,7 @@ export class SpotifyClientError extends Error {
 }
 
 export async function spotifyJson<T>(options: SpotifyJsonOptions): Promise<T> {
+  assertServerOnly("spotifyJson");
   const method = options.method ?? "GET";
   const path = options.path.startsWith("/") ? options.path : `/${options.path}`;
   const url = buildSpotifyUrl(path, options.query);
