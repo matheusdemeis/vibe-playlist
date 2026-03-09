@@ -334,16 +334,6 @@ async function lookupTrackExplicit(
       method: "GET",
       path: `/tracks/${trackId}`,
       accessToken,
-      onResponse: ({ status, bodyText, url }) => {
-        console.log("[save] spotify /v1/tracks/{id} probe", {
-          endpoint: "/v1/tracks/{id}",
-          trackId,
-          requestUrl: url,
-          status,
-          bodyExcerpt: excerpt(bodyText),
-          tokenTail: accessToken.slice(-6),
-        });
-      },
     });
     if (!track.id) {
       return null;
@@ -360,14 +350,6 @@ async function getCurrentSpotifyUser(accessToken: string): Promise<SpotifyMeResp
       method: "GET",
       path: "/me",
       accessToken,
-      onResponse: ({ status, bodyText }) => {
-        console.log("[save] spotify /v1/me probe", {
-          endpoint: "/v1/me",
-          status,
-          bodyExcerpt: excerpt(bodyText),
-          tokenTail: accessToken.slice(-6),
-        });
-      },
     });
     console.log("[save] /me identity", { meId: me.id, tokenTail: accessToken.slice(-6) });
     return me;
