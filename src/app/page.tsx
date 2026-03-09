@@ -1,8 +1,10 @@
-  "use client";
+"use client";
 
 import { useEffect, useRef, useState } from "react";
+import { VIBE_OPTIONS, type VibeKey } from "@/lib/vibes";
 
 type GenerateResponse = {
+  warning?: string;
   tracks: Array<{
     id: string;
     name: string;
@@ -38,14 +40,13 @@ type SavePlaylistResponse = {
 
 type GenerateStatus = "idle" | "loading" | "success" | "error";
 type SaveStatus = "idle" | "saving" | "success" | "error";
-const VIBE_OPTIONS = ["Chill", "Gym", "Beach", "Night Drive", "Party", "Snowboarding"] as const;
 
 export default function Home() {
   const [isConnected, setIsConnected] = useState<boolean | null>(null);
   const [spotifyScopes, setSpotifyScopes] = useState<string[]>([]);
   const [showReconnectPrompt, setShowReconnectPrompt] = useState(false);
   const [query, setQuery] = useState("");
-  const [selectedVibe, setSelectedVibe] = useState<(typeof VIBE_OPTIONS)[number] | null>(null);
+  const [selectedVibe, setSelectedVibe] = useState<VibeKey | null>(null);
   const [limit, setLimit] = useState(25);
   const [isGenerating, setIsGenerating] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -95,8 +96,8 @@ export default function Home() {
       return;
     }
     const trimmedQuery = query.trim();
-    if (!trimmedQuery) {
-      setMessage("Please enter a search query.");
+    if (!trimmedQuery && !selectedVibe) {
+      setMessage("Please enter a search query or choose a vibe.");
       setTracks([]);
       return;
     }
@@ -132,8 +133,15 @@ export default function Home() {
         return;
       }
 
-      setTracks((data as GenerateResponse).tracks);
-      setMessage("Tracks generated successfully.");
+      const responseData = data as GenerateResponse;
+      setTracks(responseData.tracks);
+      if (responseData.warning) {
+        setMessage(responseData.warning);
+      } else if (responseData.tracks.length === 0) {
+        setMessage("We couldn't build that mix right now. Try another vibe or artist.");
+      } else {
+        setMessage("Tracks generated successfully.");
+      }
       setStatus("success");
     } catch {
       setMessage("Unexpected error while generating tracks. Please try again.");
@@ -268,23 +276,27 @@ export default function Home() {
               </h2>
               <p className="text-xs text-zinc-300">Pick one mood to guide your next playlist.</p>
             </div>
-            <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3" role="group" aria-label="Choose your vibe">
+            <div
+              className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3"
+              role="group"
+              aria-label="Choose your vibe"
+            >
               {VIBE_OPTIONS.map((vibe) => {
-                const isActive = selectedVibe === vibe;
+                const isActive = selectedVibe === vibe.value;
 
                 return (
                   <button
-                    key={vibe}
+                    key={vibe.value}
                     type="button"
                     aria-pressed={isActive}
-                    onClick={() => setSelectedVibe(vibe)}
+                    onClick={() => setSelectedVibe(vibe.value)}
                     className={`rounded-xl border px-3 py-2 text-sm font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-300 ${
                       isActive
                         ? "border-amber-300 bg-amber-200/90 text-zinc-900"
                         : "border-zinc-700 bg-zinc-900/70 text-zinc-200 hover:border-zinc-500 hover:bg-zinc-800"
                     }`}
                   >
-                    {vibe}
+                    {vibe.label}
                   </button>
                 );
               })}
@@ -292,7 +304,7 @@ export default function Home() {
             <p className="mt-3 text-sm text-zinc-200">
               Selected vibe:{" "}
               <span className="font-semibold text-amber-200">
-                {selectedVibe ?? "None"}
+                {VIBE_OPTIONS.find((option) => option.value === selectedVibe)?.label ?? "None"}
               </span>
             </p>
           </section>
@@ -325,7 +337,7 @@ export default function Home() {
         {status === "success" && tracks.length > 0 ? (
           <div className="w-full rounded-2xl border border-emerald-400/30 bg-emerald-500/10 p-4 text-sm text-emerald-100">
             <p className="font-medium">Tracks generated successfully.</p>
-            <p>{tracks.length} tracks were found from Spotify Search.</p>
+            <p>{tracks.length} tracks were found from Spotify.</p>
             <button
               type="button"
               onClick={handleOpenSaveModal}

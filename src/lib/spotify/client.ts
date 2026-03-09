@@ -44,6 +44,18 @@ export async function spotifyJson<T>(options: SpotifyJsonOptions): Promise<T> {
   const method = options.method ?? "GET";
   const path = options.path.startsWith("/") ? options.path : `/${options.path}`;
   const url = buildSpotifyUrl(path, options.query);
+  const urlObject = new URL(url);
+  traceSpotifyHttp("request", {
+    method,
+    endpoint: path,
+    url,
+    query: {
+      q: urlObject.searchParams.get("q"),
+      type: urlObject.searchParams.get("type"),
+      limit: urlObject.searchParams.get("limit"),
+      market: urlObject.searchParams.get("market"),
+    },
+  });
   const headers = new Headers(options.headers ?? {});
   headers.set("Authorization", `Bearer ${options.accessToken}`);
   headers.set("Accept", "application/json");

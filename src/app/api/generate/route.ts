@@ -2,31 +2,38 @@ import { NextRequest, NextResponse } from "next/server";
 import { formatSpotifyApiErrorMessage } from "../../../lib/spotify/error";
 import { SpotifyClientError, spotifyRequest as spotifyHttpRequest } from "../../../lib/spotify/client";
 import { getSpotifySession } from "../../../lib/auth/spotify-session";
+import { normalizeVibeKey, VIBE_SEARCH_TERMS, type VibeKey } from "../../../lib/vibes";
 
-const DEFAULT_TRACK_SEARCH_LIMIT = 25;
+const DEFAULT_TRACK_COUNT = 25;
+const DEFAULT_SPOTIFY_SEARCH_LIMIT = 25;
+const GENERIC_FALLBACK_QUERY = "popular hits";
+const NO_TRACKS_WARNING = "We couldn't build that mix right now. Try another vibe or artist.";
 
 type GenerateRequestBody = {
   query?: unknown;
   limit?: unknown;
+  vibe?: unknown;
+};
+
+type SpotifyTrack = {
+  id: string;
+  name: string;
+  uri: string;
+  preview_url: string | null;
+  explicit?: boolean;
+  is_playable?: boolean;
+  restrictions?: {
+    reason?: string;
+  };
+  artists: Array<{ name: string }>;
+  album: {
+    images: Array<{ url: string }>;
+  };
 };
 
 type SpotifyTrackSearchResponse = {
   tracks: {
-    items: Array<{
-      id: string;
-      name: string;
-      uri: string;
-      preview_url: string | null;
-      explicit?: boolean;
-      is_playable?: boolean;
-      restrictions?: {
-        reason?: string;
-      };
-      artists: Array<{ name: string }>;
-      album: {
-        images: Array<{ url: string }>;
-      };
-    }>;
+    items: SpotifyTrack[];
   };
 };
 
@@ -36,25 +43,33 @@ type SpotifyRequestFailure = {
   details: Record<string, unknown> | null;
 };
 
+type SpotifyQueryParams = Record<string, string | number | boolean | undefined>;
+
 async function spotifyRequest<T>(
-  path: string,
-  accessToken: string,
-  init?: RequestInit,
+  options: {
+    path: string;
+    accessToken: string;
+    method?: string;
+    headers?: HeadersInit;
+    query?: SpotifyQueryParams;
+  },
 ): Promise<{ ok: true; data: T } | { ok: false; error: SpotifyRequestFailure }> {
-  const method = init?.method ?? "GET";
+  const method = options.method ?? "GET";
   traceGenerate("spotify_request_start", {
-    path,
+    path: options.path,
     method,
+    query: options.query ?? null,
   });
 
   try {
     const data = await spotifyHttpRequest<T>({
       method,
-      path,
-      accessToken,
-      headers: init?.headers,
+      path: options.path,
+      accessToken: options.accessToken,
+      headers: options.headers,
+      query: options.query,
     });
-    traceGenerate("spotify_request_success", { path, method, status: 200 });
+    traceGenerate("spotify_request_success", { path: options.path, method, status: 200 });
     return { ok: true, data };
   } catch (error) {
     if (error instanceof SpotifyClientError) {
@@ -64,7 +79,7 @@ async function spotifyRequest<T>(
         error.responseHeaders,
       );
       traceGenerate("spotify_request_error", {
-        path,
+        path: options.path,
         method,
         status: error.status,
         body: error.bodyText,
@@ -75,7 +90,7 @@ async function spotifyRequest<T>(
         error: {
           status: error.status,
           message,
-          details: { path, method },
+          details: { path: options.path, method },
         },
       };
     }
@@ -96,6 +111,7 @@ export async function POST(request: NextRequest) {
     method: request.method,
     url: request.url,
   });
+
   const { accessToken } = await getSpotifySession();
   if (!accessToken) {
     return jsonError(401, "You are not connected to Spotify. Please log in first.");
@@ -106,69 +122,64 @@ export async function POST(request: NextRequest) {
   if (!parsed.ok) {
     return jsonError(400, parsed.message, parsed.details);
   }
-  const query = parsed.value.query;
-  const limit = parsed.value.limit;
+
+  const { query, requestedTrackCount, vibe } = parsed.value;
 
   try {
-    const trackSearchParams = new URLSearchParams();
-    trackSearchParams.set("q", query);
-    trackSearchParams.set("type", "track");
-    trackSearchParams.set("limit", String(limit));
-    trackSearchParams.set("market", "from_token");
-    const finalQueryString = trackSearchParams.toString();
-    traceGenerate("spotify_search_query", {
-      normalizedLimit: limit,
-      queryString: finalQueryString,
+    const queryPlan = buildSearchQueries(query, vibe);
+    const spotifySearchLimit = resolveSpotifySearchLimit(requestedTrackCount);
+    const tracks = await generateFromSearchQueries(queryPlan, spotifySearchLimit, accessToken);
+
+    traceGenerate("search_generation_complete", {
+      selectedVibe: vibe,
+      plannedQueries: queryPlan,
+      spotifySearchLimit,
+      tracksReturned: tracks.length,
+      requestedTrackCount,
     });
-    const trackSearch = await spotifyRequest<SpotifyTrackSearchResponse>(
-      `/search?${finalQueryString}`,
-      accessToken,
-    );
-    if (!trackSearch.ok) {
-      return jsonError(trackSearch.error.status, trackSearch.error.message, trackSearch.error.details);
+
+    if (tracks.length === 0) {
+      return NextResponse.json({ tracks: [], warning: NO_TRACKS_WARNING });
     }
 
-    return NextResponse.json({
-      tracks: trackSearch.data.tracks.items
-        .filter((track) => track.is_playable !== false)
-        .filter((track) => !track.restrictions?.reason)
-        .map((track) => ({
-          id: track.id,
-          name: track.name,
-          artists: track.artists.map((artist) => artist.name),
-          albumImage: track.album.images[0]?.url ?? null,
-          uri: track.uri,
-          preview_url: track.preview_url,
-        })),
-    });
+    return NextResponse.json({ tracks: tracks.slice(0, requestedTrackCount) });
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Could not generate playlist right now. Please try again.";
+    const message = error instanceof Error ? error.message : "Unknown generation failure.";
     console.error("Playlist generation failed", message);
-    return jsonError(502, "Unexpected generate failure.", { message });
+    return NextResponse.json({ tracks: [], warning: NO_TRACKS_WARNING });
   }
 }
 
-function resolveLimit(value: unknown): number {
-  const rawValue =
-    typeof value === "number" || typeof value === "string" ? String(value) : "";
+function resolveRequestedTrackCount(value: unknown): number {
+  const rawValue = typeof value === "number" || typeof value === "string" ? String(value) : "";
   const parsed = Number.parseInt(rawValue, 10);
   if (!Number.isFinite(parsed)) {
-    return DEFAULT_TRACK_SEARCH_LIMIT;
+    return DEFAULT_TRACK_COUNT;
   }
 
   return Math.min(50, Math.max(1, parsed));
 }
 
+function resolveSpotifySearchLimit(requestedTrackCount: number): number {
+  const safeRequested = Number.isFinite(requestedTrackCount)
+    ? Math.min(50, Math.max(1, Math.trunc(requestedTrackCount)))
+    : DEFAULT_TRACK_COUNT;
+
+  // Use a conservative search limit to avoid API edge cases from user-entered values.
+  return Math.min(50, Math.max(20, safeRequested, DEFAULT_SPOTIFY_SEARCH_LIMIT));
+}
+
 function parseGenerateRequest(body: GenerateRequestBody):
-  | { ok: true; value: { query: string; limit: number } }
+  | { ok: true; value: { query: string; requestedTrackCount: number; vibe: VibeKey | null } }
   | { ok: false; message: string; details: Record<string, unknown> } {
-  const query = typeof body.query === "string" ? body.query.trim() : "";
-  if (query.length < 2) {
+  const query = normalizeQuery(typeof body.query === "string" ? body.query : "");
+  const vibe = normalizeVibeKey(body.vibe);
+
+  if (!vibe && query.length < 2) {
     return {
       ok: false,
-      message: "Query is required and must be at least 2 characters.",
-      details: { field: "query", minLength: 2 },
+      message: "Query is required and must be at least 2 characters when no vibe is selected.",
+      details: { field: "query", minLength: 2, requiresQueryWhenVibeMissing: true },
     };
   }
 
@@ -176,9 +187,139 @@ function parseGenerateRequest(body: GenerateRequestBody):
     ok: true,
     value: {
       query,
-      limit: resolveLimit(body.limit),
+      requestedTrackCount: resolveRequestedTrackCount(body.limit),
+      vibe,
     },
   };
+}
+
+async function generateFromSearchQueries(
+  queries: string[],
+  spotifySearchLimit: number,
+  accessToken: string,
+): Promise<Array<ReturnType<typeof mapTracks>[number]>> {
+  const tracksById = new Map<string, ReturnType<typeof mapTracks>[number]>();
+
+  for (const query of queries) {
+    const search = await searchTracks(query, spotifySearchLimit, accessToken);
+    if (!search.ok) {
+      traceGenerate("search_query_failed", {
+        query,
+        status: search.error.status,
+      });
+      continue;
+    }
+
+    const mapped = mapTracks(search.data.tracks.items);
+    for (const track of mapped) {
+      if (!tracksById.has(track.id)) {
+        tracksById.set(track.id, track);
+      }
+    }
+
+    traceGenerate("search_query_result", {
+      query,
+      returned: mapped.length,
+      dedupedTotal: tracksById.size,
+    });
+  }
+
+  return Array.from(tracksById.values());
+}
+
+async function searchTracks(query: string, limit: number, accessToken: string) {
+  const sanitizedLimit = sanitizeSpotifyLimit(limit);
+  const baseQuery = {
+    q: query,
+    type: "track",
+    limit: sanitizedLimit,
+  } as const;
+
+  traceGenerate("spotify_search_query", {
+    query,
+    type: baseQuery.type,
+    sanitizedLimit,
+    market: null,
+  });
+
+  const firstAttempt = await spotifyRequest<SpotifyTrackSearchResponse>({
+    path: "/search",
+    accessToken,
+    method: "GET",
+    query: baseQuery,
+  });
+  if (
+    firstAttempt.ok ||
+    firstAttempt.error.status !== 400 ||
+    !firstAttempt.error.message.toLowerCase().includes("invalid limit")
+  ) {
+    return firstAttempt;
+  }
+
+  const fallbackLimit = 10;
+  traceGenerate("spotify_search_limit_retry", {
+    query,
+    attemptedLimit: sanitizedLimit,
+    fallbackLimit,
+  });
+
+  return spotifyRequest<SpotifyTrackSearchResponse>({
+    path: "/search",
+    accessToken,
+    method: "GET",
+    query: {
+      q: query,
+      type: "track",
+      limit: fallbackLimit,
+    },
+  });
+}
+
+function buildSearchQueries(query: string, vibe: VibeKey | null): string[] {
+  const vibeQuery = vibe ? normalizeQuery(VIBE_SEARCH_TERMS[vibe]) : "";
+  const normalizedArtistQuery = normalizeQuery(query);
+  const queries: string[] = [];
+
+  if (normalizedArtistQuery && vibeQuery) {
+    queries.push(normalizeQuery(`${normalizedArtistQuery} ${vibeQuery}`));
+  }
+  if (normalizedArtistQuery) {
+    queries.push(normalizedArtistQuery);
+  }
+  if (vibeQuery) {
+    queries.push(vibeQuery);
+  }
+  queries.push(GENERIC_FALLBACK_QUERY);
+
+  return Array.from(new Set(queries.filter((item) => item.length > 0)));
+}
+
+function mapTracks(tracks: SpotifyTrack[]) {
+  return tracks
+    .filter((track) => track.is_playable !== false)
+    .filter((track) => !track.restrictions?.reason)
+    .map((track) => ({
+      id: track.id,
+      name: track.name,
+      artists: track.artists.map((artist) => artist.name),
+      albumImage: track.album.images[0]?.url ?? null,
+      uri: track.uri,
+      preview_url: track.preview_url,
+    }));
+}
+
+function normalizeQuery(value: string): string {
+  return value.trim().replace(/\s+/g, " ");
+}
+
+function sanitizeSpotifyLimit(value: unknown): number {
+  const rawValue = typeof value === "number" || typeof value === "string" ? String(value) : "";
+  const parsed = Number.parseInt(rawValue, 10);
+  if (!Number.isFinite(parsed)) {
+    return 10;
+  }
+
+  return Math.min(50, Math.max(1, parsed));
 }
 
 function jsonError(status: number, message: string, details?: Record<string, unknown> | null) {
