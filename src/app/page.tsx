@@ -38,12 +38,14 @@ type SavePlaylistResponse = {
 
 type GenerateStatus = "idle" | "loading" | "success" | "error";
 type SaveStatus = "idle" | "saving" | "success" | "error";
+const VIBE_OPTIONS = ["Chill", "Gym", "Beach", "Night Drive", "Party", "Snowboarding"] as const;
 
 export default function Home() {
   const [isConnected, setIsConnected] = useState<boolean | null>(null);
   const [spotifyScopes, setSpotifyScopes] = useState<string[]>([]);
   const [showReconnectPrompt, setShowReconnectPrompt] = useState(false);
   const [query, setQuery] = useState("");
+  const [selectedVibe, setSelectedVibe] = useState<(typeof VIBE_OPTIONS)[number] | null>(null);
   const [limit, setLimit] = useState(25);
   const [isGenerating, setIsGenerating] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -111,7 +113,11 @@ export default function Home() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ query: trimmedQuery, limit }),
+        body: JSON.stringify({
+          query: trimmedQuery,
+          limit,
+          ...(selectedVibe ? { vibe: selectedVibe } : {}),
+        }),
       });
       const data = (await response.json()) as GenerateResponse | ErrorResponse;
 
@@ -220,12 +226,12 @@ export default function Home() {
   };
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#090c0a] px-4 py-10">
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#12100c] px-4 py-10">
       <div
         aria-hidden
-        className="pointer-events-none absolute -top-40 left-1/2 h-96 w-96 -translate-x-1/2 rounded-full bg-emerald-500/20 blur-3xl"
+        className="pointer-events-none absolute -top-40 left-1/2 h-96 w-96 -translate-x-1/2 rounded-full bg-amber-500/20 blur-3xl"
       />
-      <main className="relative flex w-full max-w-2xl flex-col gap-6 rounded-3xl border border-zinc-800 bg-zinc-950/90 p-6 text-left shadow-2xl shadow-black/50 sm:p-10">
+      <main className="relative flex w-full max-w-2xl flex-col gap-6 rounded-3xl border border-zinc-800/90 bg-zinc-950/90 p-6 text-left shadow-2xl shadow-black/50 sm:p-10">
         <div className="space-y-2 text-center">
           <h1 className="text-4xl font-semibold tracking-tight text-zinc-50">Vibe Playlist</h1>
           <p className="text-sm text-zinc-400">Warm, fast playlist generation for Spotify.</p>
@@ -254,7 +260,42 @@ export default function Home() {
             </a>
           </div>
         ) : null}
-        <div className="flex w-full flex-col gap-3">
+        <div className="flex w-full flex-col gap-4">
+          <section className="rounded-2xl border border-amber-300/20 bg-gradient-to-br from-amber-400/10 via-orange-300/5 to-transparent p-4 sm:p-5">
+            <div className="space-y-1">
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-amber-100">
+                Choose your vibe
+              </h2>
+              <p className="text-xs text-zinc-300">Pick one mood to guide your next playlist.</p>
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3" role="group" aria-label="Choose your vibe">
+              {VIBE_OPTIONS.map((vibe) => {
+                const isActive = selectedVibe === vibe;
+
+                return (
+                  <button
+                    key={vibe}
+                    type="button"
+                    aria-pressed={isActive}
+                    onClick={() => setSelectedVibe(vibe)}
+                    className={`rounded-xl border px-3 py-2 text-sm font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-300 ${
+                      isActive
+                        ? "border-amber-300 bg-amber-200/90 text-zinc-900"
+                        : "border-zinc-700 bg-zinc-900/70 text-zinc-200 hover:border-zinc-500 hover:bg-zinc-800"
+                    }`}
+                  >
+                    {vibe}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-3 text-sm text-zinc-200">
+              Selected vibe:{" "}
+              <span className="font-semibold text-amber-200">
+                {selectedVibe ?? "None"}
+              </span>
+            </p>
+          </section>
           <input
             aria-label="Search query"
             className="w-full rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3 text-zinc-100 outline-none transition-colors placeholder:text-zinc-500 focus:border-emerald-400"
