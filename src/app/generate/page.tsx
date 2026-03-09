@@ -234,47 +234,47 @@ export default function Home() {
   };
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#12100c] px-4 py-10">
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[var(--brand-bg)] px-4 py-10">
       <div
         aria-hidden
-        className="pointer-events-none absolute -top-40 left-1/2 h-96 w-96 -translate-x-1/2 rounded-full bg-amber-500/20 blur-3xl"
+        className="pointer-events-none absolute inset-x-0 top-0 h-80 bg-[var(--brand-glow)]"
       />
-      <main className="relative flex w-full max-w-2xl flex-col gap-6 rounded-3xl border border-zinc-800/90 bg-zinc-950/90 p-6 text-left shadow-2xl shadow-black/50 sm:p-10">
+      <main className="relative flex w-full max-w-2xl flex-col gap-6 rounded-3xl border border-white/10 bg-[var(--card-bg)] p-6 text-left shadow-2xl shadow-black/50 sm:p-10">
         <div className="space-y-2 text-center">
-          <h1 className="text-4xl font-semibold tracking-tight text-zinc-50">Vibe Playlist</h1>
-          <p className="text-sm text-zinc-400">Warm, fast playlist generation for Spotify.</p>
+          <h1 className="text-4xl font-semibold tracking-tight text-[var(--text-primary)]">Vibe Playlist</h1>
+          <p className="text-sm text-[var(--text-secondary)]">Warm, fast playlist generation for Spotify.</p>
         </div>
-        <p className="rounded-full border border-zinc-800 bg-zinc-900 px-4 py-2 text-center text-sm text-zinc-300">
+        <p className="rounded-full border border-white/10 bg-[var(--surface-elevated)] px-4 py-2 text-center text-sm text-[var(--text-secondary)]">
           Status:{" "}
           {isConnected === null ? "Checking..." : isConnected ? "Connected" : "Not connected"}
         </p>
         <a
-          className="mx-auto inline-flex rounded-full bg-emerald-500 px-6 py-3 text-sm font-semibold text-zinc-950 transition-colors hover:bg-emerald-400"
+          className="mx-auto inline-flex rounded-full bg-[var(--brand-action)] px-6 py-3 text-sm font-semibold text-[var(--brand-bg)] transition-colors hover:bg-[var(--brand-action-hover)]"
           href="/api/auth/login"
         >
           Connect Spotify
         </a>
         {isConnected && !hasPlaylistScopes ? (
-          <div className="w-full rounded-2xl border border-amber-300/30 bg-amber-500/10 p-4 text-sm text-amber-200">
+          <div className="w-full rounded-2xl border border-[var(--brand-info)]/30 bg-[var(--brand-info)]/10 p-4 text-sm text-[#bfdbfe]">
             <p className="font-medium">Spotify needs playlist permissions.</p>
-            <p className="mt-1 text-amber-100/80">
+            <p className="mt-1 text-[#dbeafe]/85">
               Reconnect to grant playlist-modify-private and playlist-modify-public.
             </p>
             <a
               href="/api/auth/reconnect"
-              className="mt-2 inline-flex rounded-full bg-amber-400 px-4 py-2 text-xs font-semibold text-zinc-900 hover:bg-amber-300"
+              className="mt-2 inline-flex rounded-full bg-[var(--brand-info)] px-4 py-2 text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--brand-info-hover)]"
             >
               Reconnect Spotify
             </a>
           </div>
         ) : null}
         <div className="flex w-full flex-col gap-4">
-          <section className="rounded-2xl border border-amber-300/20 bg-gradient-to-br from-amber-400/10 via-orange-300/5 to-transparent p-4 sm:p-5">
+          <section className="rounded-2xl border border-white/10 bg-[image:var(--gradient-soft)] p-4 sm:p-5">
             <div className="space-y-1">
-              <h2 className="text-sm font-semibold uppercase tracking-wide text-amber-100">
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-[var(--text-primary)]">
                 Choose your vibe
               </h2>
-              <p className="text-xs text-zinc-300">Pick one mood to guide your next playlist.</p>
+              <p className="text-xs text-[var(--text-secondary)]">Pick one mood to guide your next playlist.</p>
             </div>
             <div
               className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3"
@@ -290,10 +290,10 @@ export default function Home() {
                     type="button"
                     aria-pressed={isActive}
                     onClick={() => setSelectedVibe(vibe.value)}
-                    className={`rounded-xl border px-3 py-2 text-sm font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-300 ${
+                    className={`rounded-xl border px-3 py-2 text-sm font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-focus)] ${
                       isActive
-                        ? "border-amber-300 bg-amber-200/90 text-zinc-900"
-                        : "border-zinc-700 bg-zinc-900/70 text-zinc-200 hover:border-zinc-500 hover:bg-zinc-800"
+                        ? "border-transparent bg-[linear-gradient(135deg,#A8E063,#56CC9D,#2F80ED)] text-[var(--text-primary)]"
+                        : "border-white/10 bg-[var(--surface-elevated)] text-[var(--text-secondary)] hover:border-[var(--brand-focus)]/60 hover:text-[var(--text-primary)]"
                     }`}
                   >
                     {vibe.label}
@@ -301,23 +301,23 @@ export default function Home() {
                 );
               })}
             </div>
-            <p className="mt-3 text-sm text-zinc-200">
+            <p className="mt-3 text-sm text-[var(--text-primary)]">
               Selected vibe:{" "}
-              <span className="font-semibold text-amber-200">
+              <span className="font-semibold text-[var(--brand-focus)]">
                 {VIBE_OPTIONS.find((option) => option.value === selectedVibe)?.label ?? "None"}
               </span>
             </p>
           </section>
           <input
             aria-label="Search query"
-            className="w-full rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3 text-zinc-100 outline-none transition-colors placeholder:text-zinc-500 focus:border-emerald-400"
+            className="w-full rounded-xl border border-white/10 bg-[var(--surface-elevated)] px-4 py-3 text-[var(--text-primary)] outline-none transition-colors placeholder:text-[var(--text-secondary)] focus:border-[var(--brand-focus)]"
             placeholder="Enter artist or track (e.g. Drake)"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />
           <input
             aria-label="Track limit"
-            className="w-full rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3 text-zinc-100 outline-none transition-colors focus:border-emerald-400"
+            className="w-full rounded-xl border border-white/10 bg-[var(--surface-elevated)] px-4 py-3 text-[var(--text-primary)] outline-none transition-colors focus:border-[var(--brand-focus)]"
             type="number"
             min={1}
             max={50}
@@ -325,7 +325,7 @@ export default function Home() {
             onChange={(event) => setLimit(Number(event.target.value))}
           />
           <button
-            className="rounded-full bg-emerald-500 px-6 py-3 text-sm font-semibold text-zinc-950 transition-colors hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
+            className="rounded-full bg-[var(--brand-action)] px-6 py-3 text-sm font-semibold text-[var(--brand-bg)] transition-colors hover:bg-[var(--brand-action-hover)] disabled:cursor-not-allowed disabled:bg-[#2a2a31] disabled:text-[var(--text-secondary)]"
             type="button"
             onClick={handleGeneratePlaylist}
             disabled={isGenerating || isConnected !== true}
@@ -333,28 +333,28 @@ export default function Home() {
             {isGenerating ? "Generating..." : "Generate Playlist"}
           </button>
         </div>
-        {message ? <p className="text-sm text-zinc-300">{message}</p> : null}
+        {message ? <p className="text-sm text-[var(--text-secondary)]">{message}</p> : null}
         {status === "success" && tracks.length > 0 ? (
-          <div className="w-full rounded-2xl border border-emerald-400/30 bg-emerald-500/10 p-4 text-sm text-emerald-100">
+          <div className="w-full rounded-2xl border border-[var(--brand-focus)]/30 bg-[var(--brand-focus)]/10 p-4 text-sm text-[#d1fae5]">
             <p className="font-medium">Tracks generated successfully.</p>
             <p>{tracks.length} tracks were found from Spotify.</p>
             <button
               type="button"
               onClick={handleOpenSaveModal}
               disabled={saveStatus === "saving"}
-              className="mt-3 rounded-full bg-emerald-500 px-4 py-2 text-xs font-semibold text-zinc-950 hover:bg-emerald-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-300"
+              className="mt-3 rounded-full bg-[var(--brand-action)] px-4 py-2 text-xs font-semibold text-[var(--brand-bg)] hover:bg-[var(--brand-action-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-focus)]"
             >
               Save to Spotify
             </button>
           </div>
         ) : null}
         {saveStatus === "success" && savedPlaylist ? (
-          <div className="w-full rounded-2xl border border-emerald-400/30 bg-emerald-500/10 p-4 text-sm text-emerald-100">
+          <div className="w-full rounded-2xl border border-[var(--brand-focus)]/30 bg-[var(--brand-focus)]/10 p-4 text-sm text-[#d1fae5]">
             <p className="font-medium">{playlistName.trim() || "Playlist"} saved to Spotify.</p>
-            <p className="mt-1 text-xs text-emerald-200">
+            <p className="mt-1 text-xs text-[#a7f3d0]">
               Tracks added: {savedPlaylist.tracksAddedCount}
             </p>
-            <p className="mt-1 text-xs text-emerald-200">
+            <p className="mt-1 text-xs text-[#a7f3d0]">
               Visibility:{" "}
               {savedPlaylist.visibility.final === null
                 ? "Unknown"
@@ -366,7 +366,7 @@ export default function Home() {
               href={savedPlaylist.playlistUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="mt-2 inline-flex rounded-full bg-zinc-950 px-4 py-2 text-xs font-semibold text-emerald-300 hover:bg-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600"
+              className="mt-2 inline-flex rounded-full bg-[var(--surface-elevated)] px-4 py-2 text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--surface-elevated-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-focus)]"
             >
               Open in Spotify
             </a>
@@ -378,7 +378,7 @@ export default function Home() {
             {showReconnectPrompt ? (
               <a
                 href="/api/auth/reconnect"
-                className="mt-2 inline-flex rounded-full bg-red-400 px-4 py-2 text-xs font-semibold text-zinc-900 hover:bg-red-300"
+                className="mt-2 inline-flex rounded-full bg-red-400 px-4 py-2 text-xs font-semibold text-[var(--brand-bg)] hover:bg-red-300"
               >
                 Reconnect Spotify
               </a>
@@ -390,7 +390,7 @@ export default function Home() {
             {tracks.map((track) => (
               <li
                 key={track.id}
-                className="flex items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-900/80 p-3"
+                className="flex items-center gap-3 rounded-xl border border-white/10 bg-[var(--surface-elevated)] p-3"
               >
                 {track.albumImage ? (
                   // eslint-disable-next-line @next/next/no-img-element
@@ -400,11 +400,11 @@ export default function Home() {
                     className="h-10 w-10 rounded-md object-cover"
                   />
                 ) : (
-                  <div className="h-10 w-10 rounded-md bg-zinc-800" />
+                  <div className="h-10 w-10 rounded-md bg-[var(--surface-elevated-hover)]" />
                 )}
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-medium text-zinc-100">{track.name}</p>
-                  <p className="truncate text-xs text-zinc-400">{track.artists.join(", ")}</p>
+                  <p className="truncate text-sm font-medium text-[var(--text-primary)]">{track.name}</p>
+                  <p className="truncate text-xs text-[var(--text-secondary)]">{track.artists.join(", ")}</p>
                 </div>
               </li>
             ))}
@@ -420,30 +420,30 @@ export default function Home() {
           aria-describedby="save-modal-description"
           className="fixed inset-0 z-30 flex items-end justify-center bg-black/60 p-4 sm:items-center"
         >
-          <div className="w-full max-w-lg space-y-4 rounded-3xl border border-zinc-800 bg-zinc-950 p-5 shadow-2xl sm:p-6">
+          <div className="w-full max-w-lg space-y-4 rounded-3xl border border-white/10 bg-[var(--card-bg)] p-5 shadow-2xl sm:p-6">
             <div className="space-y-1">
-              <h2 id="save-modal-title" className="text-lg font-semibold text-zinc-100">
+              <h2 id="save-modal-title" className="text-lg font-semibold text-[var(--text-primary)]">
                 Save to Spotify
               </h2>
-              <p id="save-modal-description" className="text-sm text-zinc-400">
+              <p id="save-modal-description" className="text-sm text-[var(--text-secondary)]">
                 Review playlist details and create a playlist in your account.
               </p>
             </div>
 
             <div className="space-y-2">
-              <label htmlFor="playlist-name" className="text-sm font-medium text-zinc-100">
+              <label htmlFor="playlist-name" className="text-sm font-medium text-[var(--text-primary)]">
                 Playlist name
               </label>
               <input
                 id="playlist-name"
                 value={playlistName}
                 onChange={(event) => setPlaylistName(event.target.value)}
-                className="w-full rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-emerald-400"
+                className="w-full rounded-xl border border-white/10 bg-[var(--surface-elevated)] px-3 py-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--brand-focus)]"
               />
             </div>
 
             <div className="space-y-2">
-              <label htmlFor="playlist-description" className="text-sm font-medium text-zinc-100">
+              <label htmlFor="playlist-description" className="text-sm font-medium text-[var(--text-primary)]">
                 Description
               </label>
               <textarea
@@ -451,11 +451,11 @@ export default function Home() {
                 value={playlistDescription}
                 onChange={(event) => setPlaylistDescription(event.target.value)}
                 rows={3}
-                className="w-full rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-emerald-400"
+                className="w-full rounded-xl border border-white/10 bg-[var(--surface-elevated)] px-3 py-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--brand-focus)]"
               />
             </div>
 
-            <label className="flex items-center gap-2 text-sm text-zinc-300">
+            <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)]">
               <input
                 type="checkbox"
                 checked={isPublicPlaylist}
@@ -469,7 +469,7 @@ export default function Home() {
                 type="button"
                 onClick={() => setIsSaveModalOpen(false)}
                 disabled={saveStatus === "saving"}
-                className="rounded-full border border-zinc-700 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-900"
+                className="rounded-full border border-white/10 px-4 py-2 text-sm text-[var(--text-secondary)] hover:bg-[var(--surface-elevated-hover)]"
               >
                 Cancel
               </button>
@@ -477,13 +477,13 @@ export default function Home() {
                 type="button"
                 onClick={() => void handleSavePlaylist()}
                 disabled={saveStatus === "saving"}
-                className="rounded-full bg-emerald-500 px-4 py-2 text-sm font-semibold text-zinc-950 hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
+                className="rounded-full bg-[var(--brand-action)] px-4 py-2 text-sm font-semibold text-[var(--brand-bg)] hover:bg-[var(--brand-action-hover)] disabled:cursor-not-allowed disabled:bg-[#2a2a31] disabled:text-[var(--text-secondary)]"
               >
                 {saveStatus === "saving" ? "Saving..." : "Save Playlist"}
               </button>
             </div>
 
-            {saveMessage ? <p className="text-sm text-zinc-300">{saveMessage}</p> : null}
+            {saveMessage ? <p className="text-sm text-[var(--text-secondary)]">{saveMessage}</p> : null}
           </div>
         </div>
       ) : null}
