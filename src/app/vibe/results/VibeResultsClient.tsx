@@ -26,8 +26,10 @@ type SavePlaylistApiError = {
 };
 
 type SavePlaylistApiSuccess = {
+  playlistName: string;
   playlistId: string;
   playlistUrl: string;
+  isPublic: boolean | null;
   snapshotId: string | null;
   tracksAddedCount: number;
   tracksAdded: boolean;
@@ -37,6 +39,8 @@ type SavePlaylistApiSuccess = {
     final: boolean | null;
   };
 };
+
+type PlaylistVisibility = "private" | "public";
 
 function readRequestInput(params: URLSearchParams): VibeBuilderInput {
   const vibes = params.get("vibes")?.split(",").filter(Boolean) ?? [];
@@ -73,7 +77,7 @@ export default function VibeResultsClient() {
   const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
   const [playlistName, setPlaylistName] = useState("");
   const [playlistDescription, setPlaylistDescription] = useState("");
-  const [isPublicPlaylist, setIsPublicPlaylist] = useState(false);
+  const [playlistVisibility, setPlaylistVisibility] = useState<PlaylistVisibility>("private");
   const [isSavingPlaylist, setIsSavingPlaylist] = useState(false);
   const [isRetryingAddTracks, setIsRetryingAddTracks] = useState(false);
   const [saveErrorMessage, setSaveErrorMessage] = useState<string | null>(null);
@@ -198,7 +202,7 @@ export default function VibeResultsClient() {
 
     setPlaylistName(defaultPlaylistName);
     setPlaylistDescription(defaultPlaylistDescription);
-    setIsPublicPlaylist(false);
+    setPlaylistVisibility("private");
   }, [defaultPlaylistDescription, defaultPlaylistName, requestParse.request]);
 
   const handleShuffle = () => {
@@ -242,19 +246,26 @@ export default function VibeResultsClient() {
     setSaveErrorMessage(null);
     setSaveResult(null);
     setSavedPlaylistName("");
+    const savePayload = {
+      name: trimmedName,
+      description: playlistDescription.trim(),
+      isPublic: playlistVisibility === "public",
+      trackUris: tracks.map((track) => track.uri),
+    };
 
     try {
+      if (process.env.NODE_ENV !== "production") {
+        console.log("[vibe-results] save payload visibility", {
+          isPublic: savePayload.isPublic,
+          isPublicType: typeof savePayload.isPublic,
+        });
+      }
       const response = await fetch("/api/vibe/save", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          name: trimmedName,
-          description: playlistDescription.trim(),
-          isPublic: isPublicPlaylist === true,
-          trackUris: tracks.map((track) => track.uri),
-        }),
+        body: JSON.stringify(savePayload),
       });
 
       if (!response.ok) {
@@ -264,8 +275,14 @@ export default function VibeResultsClient() {
       }
 
       const data = (await response.json()) as SavePlaylistApiSuccess;
+      if (process.env.NODE_ENV !== "production") {
+        console.log("[vibe-results] save response visibility", {
+          playlistId: data.playlistId,
+          isPublic: data.isPublic,
+        });
+      }
       setSaveResult(data);
-      setSavedPlaylistName(trimmedName);
+      setSavedPlaylistName(data.playlistName || trimmedName);
       if (data.tracksAdded === false) {
         setSaveErrorMessage("Playlist created, but tracks failed to add.");
       }
@@ -293,7 +310,7 @@ export default function VibeResultsClient() {
     setLatestHistoryId(null);
     setErrorMessage(null);
     setIsSaveModalOpen(false);
-    setIsPublicPlaylist(false);
+    setPlaylistVisibility("private");
     setPlaylistName(defaultPlaylistName);
     setPlaylistDescription(defaultPlaylistDescription);
     if (requestParse.request) {
@@ -424,6 +441,14 @@ export default function VibeResultsClient() {
               <p>
                 Tracks added: {saveResult.tracksAdded ? saveResult.tracksAddedCount : 0}
               </p>
+              <p>
+                Visibility:{" "}
+                {saveResult.isPublic === true
+                  ? "Public"
+                  : saveResult.isPublic === false
+                    ? "Private"
+                    : "Unknown"}
+              </p>
               <div className="flex flex-wrap gap-2">
                 <a
                   href={saveResult.playlistUrl}
@@ -531,14 +556,50 @@ export default function VibeResultsClient() {
               />
             </div>
 
-            <label className="flex items-center gap-2 text-sm text-zinc-300">
-              <input
-                type="checkbox"
-                checked={isPublicPlaylist}
-                onChange={(event) => setIsPublicPlaylist(event.target.checked)}
-              />
-              Make playlist public
-            </label>
+            <fieldset className="space-y-2">
+              <legend className="text-sm font-medium text-zinc-100">Playlist visibility</legend>
+              <div className="inline-flex rounded-xl border border-zinc-800 bg-zinc-900 p-1">
+                <label className="cursor-pointer">
+                  <input
+                    type="radio"
+                    name="playlist-visibility"
+                    value="private"
+                    checked={playlistVisibility === "private"}
+                    onChange={() => setPlaylistVisibility("private")}
+                    className="sr-only"
+                  />
+                  <span
+                    className={`inline-flex rounded-lg px-3 py-1.5 text-xs font-medium ${
+                      playlistVisibility === "private"
+                        ? "bg-emerald-500 text-zinc-950"
+                        : "text-zinc-300"
+                    }`}
+                  >
+                    Private
+                  </span>
+                </label>
+                <label className="cursor-pointer">
+                  <input
+                    type="radio"
+                    name="playlist-visibility"
+                    value="public"
+                    checked={playlistVisibility === "public"}
+                    onChange={() => setPlaylistVisibility("public")}
+                    className="sr-only"
+                  />
+                  <span
+                    className={`inline-flex rounded-lg px-3 py-1.5 text-xs font-medium ${
+                      playlistVisibility === "public"
+                        ? "bg-emerald-500 text-zinc-950"
+                        : "text-zinc-300"
+                    }`}
+                  >
+                    Public
+                  </span>
+                </label>
+              </div>
+              <p className="text-xs text-zinc-400">Private playlists are only visible to you.</p>
+            </fieldset>
 
             <div className="flex justify-end gap-2">
               <button

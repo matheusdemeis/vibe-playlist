@@ -43,4 +43,45 @@ describe("validateSavePayload", () => {
       expect(result.value.isPublic).toBe(false);
     }
   });
+
+  it("defaults to private when isPublic is missing", () => {
+    const result = validateSavePayload({
+      name: "My Playlist",
+      description: "desc",
+      trackUris: ["spotify:track:1"],
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.isPublic).toBe(false);
+    }
+  });
+
+  it("parses boolean isPublic=true", () => {
+    const result = validateSavePayload({
+      name: "My Playlist",
+      description: "desc",
+      isPublic: true,
+      trackUris: ["spotify:track:1"],
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.isPublic).toBe(true);
+    }
+  });
+
+  it("treats non-boolean isPublic as false", () => {
+    const result = validateSavePayload({
+      name: "My Playlist",
+      description: "desc",
+      isPublic: "true",
+      trackUris: ["spotify:track:1"],
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.isPublic).toBe(false);
+    }
+  });
 });

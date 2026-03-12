@@ -44,16 +44,18 @@ type SavePlaylistInput = {
 
 type CreatedPlaylist = {
   id: string;
+  name: string;
   url: string;
   requestedPublic: boolean;
-  finalPublic: boolean | null;
+  spotifyPublic: boolean | null;
 };
 
 export type SavePlaylistResult = {
+  playlistName: string;
   playlistId: string;
   playlistUrl: string;
+  isPublic: boolean | null;
   tracksAddedCount: number;
-  visibilityUpdated: boolean;
 };
 
 export class PlaylistSaveError extends Error {
@@ -81,10 +83,11 @@ export class PlaylistSaveError extends Error {
 
 export async function savePlaylistToSpotify(input: SavePlaylistInput): Promise<SavePlaylistResult> {
   const sharedAccessToken = input.accessToken;
+  const isPublic = input.isPublic;
   console.log("[save] starting save", {
     tokenTail: sharedAccessToken.slice(-6),
     grantedScopes: input.grantedScopes,
-    isPublic: input.isPublic,
+    isPublic,
     trackCount: input.trackUris.length,
   });
 
@@ -100,27 +103,44 @@ export async function savePlaylistToSpotify(input: SavePlaylistInput): Promise<S
   const playlist = await createPlaylist(sharedAccessToken, {
     name: input.name,
     description: input.description,
-    isPublic: input.isPublic,
+    isPublic,
   });
   const { snapshotId, tracksAddedCount } = await addTracksInBatches(
     sharedAccessToken,
     playlist.id,
     trackUris,
     SPOTIFY_TRACKS_BATCH_SIZE,
-    playlist.requestedPublic,
+    isPublic,
   );
   void snapshotId;
-  // Visibility updates are best-effort and should not block add-tracks success.
-  const visibilityUpdated = await enforceVisibilityAfterCreate(
+  // Read-only visibility check after updates. Do not mutate visibility here.
+  const observedPublic = await readPlaylistVisibilityAfterSave(
     sharedAccessToken,
     playlist.id,
-    playlist.requestedPublic,
+    isPublic,
   );
+  const finalVisibility =
+    playlist.spotifyPublic !== null && observedPublic !== null && observedPublic !== playlist.spotifyPublic
+      ? playlist.spotifyPublic
+      : observedPublic ?? playlist.spotifyPublic;
+  if (
+    process.env.NODE_ENV !== "production" &&
+    playlist.spotifyPublic !== null &&
+    observedPublic !== null &&
+    observedPublic !== playlist.spotifyPublic
+  ) {
+    console.log("[save] visibility mismatch between create and post-save GET; using create response", {
+      playlistId: playlist.id,
+      createdPublic: playlist.spotifyPublic,
+      observedPublic,
+    });
+  }
   return {
+    playlistName: playlist.name,
     playlistId: playlist.id,
     playlistUrl: playlist.url,
+    isPublic: finalVisibility,
     tracksAddedCount,
-    visibilityUpdated,
   };
 }
 
@@ -265,6 +285,9 @@ export async function addTracksInBatches(
 }
 
 async function enforcePrivateBeforeInsert(accessToken: string, playlistId: string): Promise<void> {
+  if (process.env.NODE_ENV !== "production") {
+    console.log("[save] pre-insert visibility PUT body", { playlistId, public: false });
+  }
   try {
     await spotifyJson({
       method: "PUT",
@@ -438,12 +461,15 @@ async function createPlaylist(
   accessToken: string,
   input: { name: string; description: string; isPublic: boolean },
 ): Promise<CreatedPlaylist> {
-  const finalPublic = input.isPublic === true;
+  const isPublic = input.isPublic;
   const payload = {
     name: input.name,
     description: input.description,
-    public: finalPublic,
+    public: isPublic,
   };
+  if (process.env.NODE_ENV !== "production") {
+    console.log("[save] create playlist payload visibility", { public: payload.public });
+  }
   let createdPlaylist: SpotifyCreatePlaylistResponse;
   try {
     createdPlaylist = await spotifyJson<SpotifyCreatePlaylistResponse>({
@@ -465,11 +491,17 @@ async function createPlaylist(
   }
   traceSaveLibrary("spotify_create_playlist_response_meta", {
     playlistId: createdPlaylist.id,
-    requestedPublic: finalPublic,
+    requestedPublic: isPublic,
     playlistPublic: createdPlaylist.public ?? null,
     playlistOwnerId: createdPlaylist.owner?.id ?? null,
     playlistCollaborative: createdPlaylist.collaborative ?? null,
   });
+  if (process.env.NODE_ENV !== "production") {
+    console.log("[save] create playlist response visibility", {
+      playlistId: createdPlaylist.id,
+      playlistPublic: createdPlaylist.public ?? null,
+    });
+  }
   traceSaveLibrary("spotify_create_playlist_raw_public", {
     source: "create_response",
     playlistId: createdPlaylist.id,
@@ -485,48 +517,54 @@ async function createPlaylist(
   });
   return {
     id: createdPlaylist.id,
+    name: input.name,
     url: createdPlaylist.external_urls.spotify,
-    requestedPublic: finalPublic,
-    finalPublic: createdPlaylist.public ?? finalPublic,
+    requestedPublic: isPublic,
+    spotifyPublic: createdPlaylist.public ?? null,
   };
 }
 
-async function enforceVisibilityAfterCreate(
+async function readPlaylistVisibilityAfterSave(
   accessToken: string,
   playlistId: string,
   requestedPublic: boolean,
-): Promise<boolean> {
+): Promise<boolean | null> {
   try {
-    await spotifyJson({
-      method: "PUT",
-      path: `/playlists/${playlistId}`,
-      accessToken,
-      json: { public: requestedPublic },
-    });
-    await wait(1500);
+    await wait(750);
     const refreshedPlaylist = await spotifyJson<SpotifyCreatePlaylistResponse>({
       method: "GET",
       path: `/playlists/${playlistId}`,
       accessToken,
     });
-    const confirmed = refreshedPlaylist.public === requestedPublic;
-    traceSaveLibrary("spotify_visibility_post_create_check", {
+    if (process.env.NODE_ENV !== "production") {
+      console.log("[save] post-save GET playlist visibility raw", {
+        id: refreshedPlaylist.id ?? null,
+        public: refreshedPlaylist.public ?? null,
+        publicType: typeof refreshedPlaylist.public,
+        collaborative: refreshedPlaylist.collaborative ?? null,
+        ownerId: refreshedPlaylist.owner?.id ?? null,
+        spotifyUrl: refreshedPlaylist.external_urls?.spotify ?? null,
+      });
+    }
+    const observedPublic = refreshedPlaylist.public === true;
+    const confirmed = observedPublic === requestedPublic;
+    traceSaveLibrary("spotify_visibility_post_save_check", {
       playlistId,
       requestedPublic,
-      observedPublic: refreshedPlaylist.public ?? null,
+      observedPublic,
       confirmed,
     });
-    return confirmed;
+    return observedPublic;
   } catch (error) {
     if (error instanceof SpotifyClientError) {
-      traceSaveLibrary("spotify_visibility_post_create_warning", {
+      traceSaveLibrary("spotify_visibility_post_save_warning", {
         playlistId,
         requestedPublic,
         status: error.status,
         endpoint: error.path,
         bodyExcerpt: error.bodyText.slice(0, 200),
       });
-      return false;
+      return null;
     }
     throw error;
   }

@@ -77,7 +77,8 @@ export async function POST(request: NextRequest) {
     );
   }
   traceSave("received_public_flag", {
-    raw: body.isPublic,
+    rawIsPublic: body.isPublic,
+    rawIsPublicType: typeof body.isPublic,
     normalized: parseResult.value.isPublic,
   });
   const requiredScope = getRequiredPlaylistModifyScope(parseResult.value.isPublic);
@@ -107,14 +108,16 @@ export async function POST(request: NextRequest) {
       trackUris: parseResult.value.trackUris,
     });
     return NextResponse.json({
+      playlistName: result.playlistName,
       playlistId: result.playlistId,
       playlistUrl: result.playlistUrl,
+      isPublic: result.isPublic,
       snapshotId: null,
       tracksAddedCount: result.tracksAddedCount,
       tracksAdded: result.tracksAddedCount > 0,
       visibility: {
         requested: parseResult.value.isPublic,
-        final: result.visibilityUpdated ? parseResult.value.isPublic : null,
+        final: result.isPublic,
       },
     });
   } catch (error) {
@@ -159,7 +162,7 @@ export function validateSavePayload(payload: SavePlaylistRequestBody):
   | { ok: false; error: string } {
   const name = typeof payload.name === "string" ? payload.name.trim() : "";
   const description = typeof payload.description === "string" ? payload.description.trim() : "";
-  const isPublic = parsePublicFlag(payload.isPublic);
+  const isPublic = typeof payload.isPublic === "boolean" ? payload.isPublic : false;
   const trackUris = parseStringArray(payload.trackUris);
 
   if (!name) {
@@ -179,10 +182,6 @@ export function validateSavePayload(payload: SavePlaylistRequestBody):
       trackUris,
     },
   };
-}
-
-function parsePublicFlag(value: unknown): boolean {
-  return value === true;
 }
 
 function parseStringArray(value: unknown): string[] {
