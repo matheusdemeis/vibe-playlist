@@ -78,6 +78,7 @@ export default function VibeResultsClient() {
   const [isRetryingAddTracks, setIsRetryingAddTracks] = useState(false);
   const [saveErrorMessage, setSaveErrorMessage] = useState<string | null>(null);
   const [saveResult, setSaveResult] = useState<SavePlaylistApiSuccess | null>(null);
+  const [savedPlaylistName, setSavedPlaylistName] = useState<string>("");
   const [latestHistoryId, setLatestHistoryId] = useState<string | null>(null);
 
   const queryString = searchParams.toString();
@@ -240,6 +241,7 @@ export default function VibeResultsClient() {
     setIsSavingPlaylist(true);
     setSaveErrorMessage(null);
     setSaveResult(null);
+    setSavedPlaylistName("");
 
     try {
       const response = await fetch("/api/vibe/save", {
@@ -263,6 +265,7 @@ export default function VibeResultsClient() {
 
       const data = (await response.json()) as SavePlaylistApiSuccess;
       setSaveResult(data);
+      setSavedPlaylistName(trimmedName);
       if (data.tracksAdded === false) {
         setSaveErrorMessage("Playlist created, but tracks failed to add.");
       }
@@ -277,6 +280,24 @@ export default function VibeResultsClient() {
       setSaveErrorMessage("Could not save playlist right now.");
     } finally {
       setIsSavingPlaylist(false);
+    }
+  };
+
+  const handleCreateAnotherPlaylist = () => {
+    setTracks([]);
+    setLockedTrackIds([]);
+    setLockedTrackCache({});
+    setSaveResult(null);
+    setSavedPlaylistName("");
+    setSaveErrorMessage(null);
+    setLatestHistoryId(null);
+    setErrorMessage(null);
+    setIsSaveModalOpen(false);
+    setIsPublicPlaylist(false);
+    setPlaylistName(defaultPlaylistName);
+    setPlaylistDescription(defaultPlaylistDescription);
+    if (requestParse.request) {
+      void fetchResults();
     }
   };
 
@@ -395,38 +416,43 @@ export default function VibeResultsClient() {
       {!requestParse.error && !isLoading && !errorMessage && tracks.length > 0 ? (
         <section className="space-y-4">
           {saveResult ? (
-            <div className="space-y-2 rounded-xl border border-emerald-300/30 bg-emerald-500/10 p-4 text-sm text-emerald-100">
+            <div className="space-y-3 rounded-xl border border-emerald-300/30 bg-emerald-500/10 p-4 text-sm text-emerald-100">
+              <p className="font-semibold">Playlist created successfully.</p>
               <p>
-                Playlist saved with{" "}
-                {saveResult.tracksAdded ? saveResult.tracksAddedCount : 0} tracks.
+                Name: <span className="font-medium">{savedPlaylistName || "Playlist"}</span>
               </p>
               <p>
-                Visibility:{" "}
-                {saveResult.visibility.final === null
-                  ? "Unknown"
-                  : saveResult.visibility.final
-                    ? "Public"
-                    : "Private"}
+                Tracks added: {saveResult.tracksAdded ? saveResult.tracksAddedCount : 0}
               </p>
-              {saveResult.warning ? <p className="text-amber-200">{saveResult.warning}</p> : null}
-              <a
-                href={saveResult.playlistUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex rounded-full bg-zinc-950 px-4 py-2 text-xs font-medium text-emerald-300 hover:bg-black"
-              >
-                Open in Spotify
-              </a>
-              {!saveResult.tracksAdded ? (
+              <div className="flex flex-wrap gap-2">
+                <a
+                  href={saveResult.playlistUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex rounded-full bg-zinc-950 px-4 py-2 text-xs font-medium text-emerald-300 hover:bg-black"
+                >
+                  Open in Spotify
+                </a>
                 <button
                   type="button"
-                  onClick={() => void handleRetryAddTracks()}
-                  disabled={isRetryingAddTracks}
-                  className="ml-2 inline-flex rounded-full bg-amber-400 px-4 py-2 text-xs font-semibold text-zinc-900 hover:bg-amber-300 disabled:opacity-60"
+                  onClick={handleCreateAnotherPlaylist}
+                  className="inline-flex rounded-full border border-emerald-300/30 px-4 py-2 text-xs font-medium text-emerald-100 hover:bg-emerald-400/10"
                 >
-                  {isRetryingAddTracks ? "Retrying..." : "Retry add tracks"}
+                  Create Another Playlist
                 </button>
-              ) : null}
+                {!saveResult.tracksAdded ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleRetryAddTracks()}
+                    disabled={isRetryingAddTracks}
+                    className="inline-flex rounded-full bg-amber-400 px-4 py-2 text-xs font-semibold text-zinc-900 hover:bg-amber-300 disabled:opacity-60"
+                  >
+                    {isRetryingAddTracks ? "Retrying..." : "Retry add tracks"}
+                  </button>
+                ) : null}
+              </div>
+              {saveResult.warning ? <p className="text-amber-200">{saveResult.warning}</p> : null}
+              {saveErrorMessage ? <p className="text-amber-200">{saveErrorMessage}</p> : null}
             </div>
           ) : null}
 
