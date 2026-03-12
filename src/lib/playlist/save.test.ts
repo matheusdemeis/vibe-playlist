@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { addTracksInBatches, buildTrackUris, chunkTrackUris, normalizeTrackUris } from "./save";
+import {
+  addTracksInBatches,
+  buildTrackUris,
+  chunkTrackUris,
+  normalizeTrackUris,
+  savePlaylistToSpotify,
+} from "./save";
 
 describe("chunkTrackUris", () => {
   it("splits URIs into fixed-size chunks", () => {
@@ -147,6 +153,107 @@ describe("normalizeTrackUris", () => {
     ]);
 
     expect(uris).toEqual(["spotify:track:4iV5W9uYEdYUVa79Axb7Rh"]);
+  });
+});
+
+describe("savePlaylistToSpotify", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("creates private playlist when requested visibility is private", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/me/playlists")) {
+        return new Response(
+          JSON.stringify({
+            id: "playlist-private",
+            public: false,
+            owner: { id: "user-123" },
+            external_urls: { spotify: "https://open.spotify.com/playlist/playlist-private" },
+          }),
+          { status: 201 },
+        );
+      }
+      if (url.endsWith("/me")) {
+        return new Response(
+          JSON.stringify({ id: "user-123", explicit_content: { filter_enabled: false } }),
+          { status: 200 },
+        );
+      }
+      if (url.endsWith("/playlists/playlist-private/items")) {
+        return new Response(JSON.stringify({ snapshot_id: "snap-1" }), { status: 201 });
+      }
+      if (url.endsWith("/playlists/playlist-private") && init?.method === "PUT") {
+        return new Response(null, { status: 200 });
+      }
+      if (url.endsWith("/playlists/playlist-private") && init?.method === "GET") {
+        return new Response(JSON.stringify({ public: false }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+
+    const result = await savePlaylistToSpotify({
+      accessToken: "token-123",
+      grantedScopes: ["playlist-modify-private", "playlist-modify-public"],
+      name: "Private Playlist",
+      description: "desc",
+      isPublic: false,
+      trackUris: ["spotify:track:4iV5W9uYEdYUVa79Axb7Rh"],
+    });
+
+    const createCall = fetchMock.mock.calls.find(([input]) =>
+      String(input).endsWith("/me/playlists"),
+    );
+    expect(createCall).toBeDefined();
+    const createPayload = JSON.parse(String(createCall?.[1]?.body ?? "{}")) as { public?: boolean };
+    expect(createPayload.public).toBe(false);
+    expect(result.playlistName).toBe("Private Playlist");
+    expect(result.isPublic).toBe(false);
+  });
+
+  it("trusts create response visibility when post-save GET is inconsistent", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/me/playlists")) {
+        return new Response(
+          JSON.stringify({
+            id: "playlist-private",
+            public: false,
+            owner: { id: "user-123" },
+            external_urls: { spotify: "https://open.spotify.com/playlist/playlist-private" },
+          }),
+          { status: 201 },
+        );
+      }
+      if (url.endsWith("/me")) {
+        return new Response(
+          JSON.stringify({ id: "user-123", explicit_content: { filter_enabled: false } }),
+          { status: 200 },
+        );
+      }
+      if (url.endsWith("/playlists/playlist-private/items")) {
+        return new Response(JSON.stringify({ snapshot_id: "snap-1" }), { status: 201 });
+      }
+      if (url.endsWith("/playlists/playlist-private") && init?.method === "PUT") {
+        return new Response(null, { status: 200 });
+      }
+      if (url.endsWith("/playlists/playlist-private") && init?.method === "GET") {
+        return new Response(JSON.stringify({ id: "playlist-private", public: true }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+
+    const result = await savePlaylistToSpotify({
+      accessToken: "token-123",
+      grantedScopes: ["playlist-modify-private", "playlist-modify-public"],
+      name: "Private Playlist",
+      description: "desc",
+      isPublic: false,
+      trackUris: ["spotify:track:4iV5W9uYEdYUVa79Axb7Rh"],
+    });
+
+    expect(result.isPublic).toBe(false);
   });
 });
 

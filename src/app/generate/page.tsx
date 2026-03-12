@@ -28,8 +28,10 @@ type ErrorResponse = {
 };
 
 type SavePlaylistResponse = {
+  playlistName: string;
   playlistId: string;
   playlistUrl: string;
+  isPublic: boolean | null;
   tracksAddedCount: number;
   tracksAdded: boolean;
   visibility: {
@@ -40,6 +42,7 @@ type SavePlaylistResponse = {
 
 type GenerateStatus = "idle" | "loading" | "success" | "error";
 type SaveStatus = "idle" | "saving" | "success" | "error";
+type PlaylistVisibility = "private" | "public";
 
 export default function Home() {
   const [isConnected, setIsConnected] = useState<boolean | null>(null);
@@ -55,7 +58,7 @@ export default function Home() {
   const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
   const [playlistName, setPlaylistName] = useState("");
   const [playlistDescription, setPlaylistDescription] = useState("Generated with Vibe Playlist");
-  const [isPublicPlaylist, setIsPublicPlaylist] = useState(false);
+  const [playlistVisibility, setPlaylistVisibility] = useState<PlaylistVisibility>("private");
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [savedPlaylist, setSavedPlaylist] = useState<SavePlaylistResponse | null>(null);
@@ -157,7 +160,7 @@ export default function Home() {
     const trimmedQuery = query.trim();
     setPlaylistName(trimmedQuery ? `${trimmedQuery} • Vibe Playlist` : fallbackName);
     setPlaylistDescription("Generated with Vibe Playlist");
-    setIsPublicPlaylist(false);
+    setPlaylistVisibility("private");
     setSaveStatus("idle");
     setSaveMessage(null);
     setIsSaveModalOpen(true);
@@ -177,19 +180,26 @@ export default function Home() {
     saveInFlightRef.current = true;
     setSaveStatus("saving");
     setSaveMessage("Saving playlist to Spotify...");
+    const savePayload = {
+      name,
+      description: playlistDescription.trim(),
+      isPublic: playlistVisibility === "public",
+      trackUris: tracks.map((track) => track.uri),
+    };
 
     try {
+      if (process.env.NODE_ENV !== "production") {
+        console.log("[generate] save payload visibility", {
+          isPublic: savePayload.isPublic,
+          isPublicType: typeof savePayload.isPublic,
+        });
+      }
       const response = await fetch("/api/vibe/save", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          name,
-          description: playlistDescription.trim(),
-          isPublic: isPublicPlaylist === true,
-          trackUris: tracks.map((track) => track.uri),
-        }),
+        body: JSON.stringify(savePayload),
       });
 
       const data = (await response.json()) as SavePlaylistResponse | ErrorResponse;
@@ -217,6 +227,12 @@ export default function Home() {
       }
 
       const result = data as SavePlaylistResponse;
+      if (process.env.NODE_ENV !== "production") {
+        console.log("[generate] save response visibility", {
+          playlistId: result.playlistId,
+          isPublic: result.isPublic,
+        });
+      }
       setSavedPlaylist(result);
       setSaveStatus("success");
       setSaveMessage(
@@ -350,15 +366,15 @@ export default function Home() {
         ) : null}
         {saveStatus === "success" && savedPlaylist ? (
           <div className="w-full rounded-2xl border border-[var(--brand-focus)]/30 bg-[var(--brand-focus)]/10 p-4 text-sm text-[#d1fae5]">
-            <p className="font-medium">{playlistName.trim() || "Playlist"} saved to Spotify.</p>
+            <p className="font-medium">{savedPlaylist.playlistName || "Playlist"} saved to Spotify.</p>
             <p className="mt-1 text-xs text-[#a7f3d0]">
               Tracks added: {savedPlaylist.tracksAddedCount}
             </p>
             <p className="mt-1 text-xs text-[#a7f3d0]">
               Visibility:{" "}
-              {savedPlaylist.visibility.final === null
+              {savedPlaylist.isPublic === null
                 ? "Unknown"
-                : savedPlaylist.visibility.final
+                : savedPlaylist.isPublic
                   ? "Public"
                   : "Private"}
             </p>
@@ -455,14 +471,54 @@ export default function Home() {
               />
             </div>
 
-            <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)]">
-              <input
-                type="checkbox"
-                checked={isPublicPlaylist}
-                onChange={(event) => setIsPublicPlaylist(event.target.checked)}
-              />
-              Make playlist public
-            </label>
+            <fieldset className="space-y-2">
+              <legend className="text-sm font-medium text-[var(--text-primary)]">
+                Playlist visibility
+              </legend>
+              <div className="inline-flex rounded-xl border border-white/10 bg-[var(--surface-elevated)] p-1">
+                <label className="cursor-pointer">
+                  <input
+                    type="radio"
+                    name="playlist-visibility-generate"
+                    value="private"
+                    checked={playlistVisibility === "private"}
+                    onChange={() => setPlaylistVisibility("private")}
+                    className="sr-only"
+                  />
+                  <span
+                    className={`inline-flex rounded-lg px-3 py-1.5 text-xs font-medium ${
+                      playlistVisibility === "private"
+                        ? "bg-[var(--brand-action)] text-[var(--brand-bg)]"
+                        : "text-[var(--text-secondary)]"
+                    }`}
+                  >
+                    Private
+                  </span>
+                </label>
+                <label className="cursor-pointer">
+                  <input
+                    type="radio"
+                    name="playlist-visibility-generate"
+                    value="public"
+                    checked={playlistVisibility === "public"}
+                    onChange={() => setPlaylistVisibility("public")}
+                    className="sr-only"
+                  />
+                  <span
+                    className={`inline-flex rounded-lg px-3 py-1.5 text-xs font-medium ${
+                      playlistVisibility === "public"
+                        ? "bg-[var(--brand-action)] text-[var(--brand-bg)]"
+                        : "text-[var(--text-secondary)]"
+                    }`}
+                  >
+                    Public
+                  </span>
+                </label>
+              </div>
+              <p className="text-xs text-[var(--text-secondary)]">
+                Private playlists are only visible to you.
+              </p>
+            </fieldset>
 
             <div className="flex justify-end gap-2">
               <button
