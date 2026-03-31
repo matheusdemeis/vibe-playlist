@@ -8,6 +8,7 @@ const DEFAULT_TRACK_COUNT = 25;
 const DEFAULT_SPOTIFY_SEARCH_LIMIT = 25;
 const GENERIC_FALLBACK_QUERY = "popular hits";
 const NO_TRACKS_WARNING = "We couldn't build that mix right now. Try another vibe or artist.";
+const MAX_SEARCH_PAGES_PER_QUERY = 4;
 
 type GenerateRequestBody = {
   query?: unknown;
@@ -62,6 +63,11 @@ type GeneratedTrack = {
   uri: string;
   preview_url: string | null;
   artistIds: string[];
+};
+
+type ResolvedArtist = {
+  id: string;
+  name: string;
 };
 
 async function spotifyRequest<T>(
@@ -145,22 +151,26 @@ export async function POST(request: NextRequest) {
   const { query, requestedTrackCount, vibe, selectedArtistId } = parsed.value;
 
   try {
-    const queryPlan = buildSearchQueries(query, vibe);
     const spotifySearchLimit = resolveSpotifySearchLimit(requestedTrackCount);
-    const requiredArtistId =
-      selectedArtistId || (query ? await resolveArtistId(query, accessToken) : null);
-    const tracks = await generateFromSearchQueries(
+    const resolvedArtist = await resolveRequestedArtist({
+      selectedArtistId,
+      query,
+      accessToken,
+    });
+    const queryPlan = buildSearchPhases(query, vibe, resolvedArtist?.name ?? null);
+    const tracks = await generateFromSearchPhases(
       queryPlan,
       spotifySearchLimit,
+      requestedTrackCount,
       accessToken,
-      requiredArtistId,
+      resolvedArtist?.id ?? null,
     );
 
     traceGenerate("search_generation_complete", {
       selectedVibe: vibe,
       plannedQueries: queryPlan,
       spotifySearchLimit,
-      requiredArtistId,
+      requiredArtistId: resolvedArtist?.id ?? null,
       tracksReturned: tracks.length,
       requestedTrackCount,
     });
@@ -239,46 +249,34 @@ function parseGenerateRequest(body: GenerateRequestBody):
   };
 }
 
-async function generateFromSearchQueries(
-  queries: string[],
+async function generateFromSearchPhases(
+  queryPhases: string[][],
   spotifySearchLimit: number,
+  targetCount: number,
   accessToken: string,
   requiredArtistId: string | null,
 ): Promise<GeneratedTrack[]> {
   const tracksById = new Map<string, GeneratedTrack>();
 
-  for (const query of queries) {
-    const search = await searchTracks(query, spotifySearchLimit, accessToken);
-    if (!search.ok) {
-      traceGenerate("search_query_failed", {
-        query,
-        status: search.error.status,
-      });
-      continue;
-    }
-
-    const mapped = mapTracks(search.data.tracks.items);
-    const filtered = requiredArtistId
-      ? mapped.filter((track) => track.artistIds.includes(requiredArtistId))
-      : mapped;
-    for (const track of filtered) {
-      if (!tracksById.has(track.id)) {
-        tracksById.set(track.id, track);
-      }
-    }
-
-    traceGenerate("search_query_result", {
-      query,
-      returned: mapped.length,
-      returnedAfterArtistFilter: filtered.length,
-      dedupedTotal: tracksById.size,
+  for (const queries of queryPhases) {
+    await appendTracksFromQueries({
+      queries,
+      spotifySearchLimit,
+      targetCount,
+      accessToken,
+      requiredArtistId,
+      tracksById,
     });
+
+    if (tracksById.size >= targetCount) {
+      break;
+    }
   }
 
   return Array.from(tracksById.values());
 }
 
-async function resolveArtistId(query: string, accessToken: string): Promise<string | null> {
+async function resolveArtistId(query: string, accessToken: string): Promise<ResolvedArtist | null> {
   const artistSearch = await spotifyRequest<SpotifyArtistSearchResponse>({
     path: "/search",
     accessToken,
@@ -299,21 +297,112 @@ async function resolveArtistId(query: string, accessToken: string): Promise<stri
     (artist) => normalizeForMatch(artist.name) === normalizedQuery,
   );
 
-  return (exactMatch ?? artistSearch.data.artists.items[0])?.id ?? null;
+  const resolved = exactMatch ?? artistSearch.data.artists.items[0];
+  if (!resolved) {
+    return null;
+  }
+
+  return {
+    id: resolved.id,
+    name: resolved.name,
+  };
 }
 
-async function searchTracks(query: string, limit: number, accessToken: string) {
+async function resolveRequestedArtist(input: {
+  selectedArtistId: string | null;
+  query: string;
+  accessToken: string;
+}): Promise<ResolvedArtist | null> {
+  if (input.selectedArtistId) {
+    return {
+      id: input.selectedArtistId,
+      name: input.query || "",
+    };
+  }
+
+  if (!input.query) {
+    return null;
+  }
+
+  return resolveArtistId(input.query, input.accessToken);
+}
+
+type AppendTracksFromQueriesInput = {
+  queries: string[];
+  spotifySearchLimit: number;
+  targetCount: number;
+  accessToken: string;
+  requiredArtistId: string | null;
+  tracksById: Map<string, GeneratedTrack>;
+};
+
+async function appendTracksFromQueries(input: AppendTracksFromQueriesInput): Promise<void> {
+  for (const query of input.queries) {
+    let offset = 0;
+
+    for (let page = 0; page < MAX_SEARCH_PAGES_PER_QUERY; page += 1) {
+      if (input.tracksById.size >= input.targetCount) {
+        return;
+      }
+
+      const search = await searchTracks(query, input.spotifySearchLimit, offset, input.accessToken);
+      if (!search.ok) {
+        traceGenerate("search_query_failed", {
+          query,
+          status: search.error.status,
+          offset,
+        });
+        break;
+      }
+
+      const sourceItems = search.data.tracks.items;
+      if (sourceItems.length === 0) {
+        break;
+      }
+
+      const mapped = mapTracks(sourceItems);
+      const filtered = input.requiredArtistId
+        ? mapped.filter((track) => track.artistIds.includes(input.requiredArtistId))
+        : mapped;
+
+      for (const track of filtered) {
+        if (!input.tracksById.has(track.id)) {
+          input.tracksById.set(track.id, track);
+        }
+      }
+
+      traceGenerate("search_query_result", {
+        query,
+        offset,
+        returned: mapped.length,
+        returnedAfterArtistFilter: filtered.length,
+        dedupedTotal: input.tracksById.size,
+      });
+
+      if (sourceItems.length < input.spotifySearchLimit) {
+        break;
+      }
+
+      offset += input.spotifySearchLimit;
+    }
+  }
+}
+
+async function searchTracks(query: string, limit: number, offset: number, accessToken: string) {
   const sanitizedLimit = sanitizeSpotifyLimit(limit);
+  const sanitizedOffset = sanitizeSpotifyOffset(offset);
   const baseQuery = {
     q: query,
     type: "track",
     limit: sanitizedLimit,
+    offset: sanitizedOffset,
   } as const;
 
   traceGenerate("spotify_search_query", {
     query,
     type: baseQuery.type,
     sanitizedLimit,
+    sanitizedOffset,
     market: null,
   });
 
@@ -334,6 +423,7 @@ async function searchTracks(query: string, limit: number, accessToken: string) {
   const fallbackLimit = 10;
   traceGenerate("spotify_search_limit_retry", {
     query,
+    offset: sanitizedOffset,
     attemptedLimit: sanitizedLimit,
     fallbackLimit,
   });
@@ -346,6 +436,7 @@ async function searchTracks(query: string, limit: number, accessToken: string) {
       q: query,
       type: "track",
       limit: fallbackLimit,
+      offset: sanitizedOffset,
     },
   });
 }
@@ -367,6 +458,39 @@ function buildSearchQueries(query: string, vibe: VibeKey | null): string[] {
   queries.push(GENERIC_FALLBACK_QUERY);
 
   return Array.from(new Set(queries.filter((item) => item.length > 0)));
+}
+
+function buildSearchPhases(
+  query: string,
+  vibe: VibeKey | null,
+  resolvedArtistName: string | null,
+): string[][] {
+  const normalizedArtistQuery = normalizeQuery(query);
+  const vibeQuery = vibe ? normalizeQuery(VIBE_SEARCH_TERMS[vibe]) : "";
+
+  if (!resolvedArtistName) {
+    return [buildSearchQueries(query, vibe)];
+  }
+
+  const strictMoodAndArtist =
+    normalizedArtistQuery && vibeQuery ? [normalizeQuery(`${normalizedArtistQuery} ${vibeQuery}`)] : [];
+  const strictArtistOnly = normalizedArtistQuery ? [normalizedArtistQuery] : [];
+  const broaderArtistCatalog = [buildArtistCatalogQuery(resolvedArtistName)];
+
+  const phases = [strictMoodAndArtist, strictArtistOnly, broaderArtistCatalog]
+    .map((phase) => Array.from(new Set(phase.map((item) => normalizeQuery(item)).filter(Boolean))))
+    .filter((phase) => phase.length > 0);
+
+  return phases.length > 0 ? phases : [buildSearchQueries(query, vibe)];
+}
+
+function buildArtistCatalogQuery(artistName: string): string {
+  const normalized = normalizeQuery(artistName);
+  if (!normalized) {
+    return "";
+  }
+
+  return /\s/.test(normalized) ? `artist:"${normalized}"` : `artist:${normalized}`;
 }
 
 function mapTracks(tracks: SpotifyTrack[]) {
@@ -400,6 +524,16 @@ function sanitizeSpotifyLimit(value: unknown): number {
   }
 
   return Math.min(50, Math.max(1, parsed));
+}
+
+function sanitizeSpotifyOffset(value: unknown): number {
+  const rawValue = typeof value === "number" || typeof value === "string" ? String(value) : "";
+  const parsed = Number.parseInt(rawValue, 10);
+  if (!Number.isFinite(parsed)) {
+    return 0;
+  }
+
+  return Math.min(1000, Math.max(0, parsed));
 }
 
 function jsonError(status: number, message: string, details?: Record<string, unknown> | null) {
