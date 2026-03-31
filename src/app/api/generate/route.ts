@@ -13,6 +13,7 @@ type GenerateRequestBody = {
   query?: unknown;
   limit?: unknown;
   vibe?: unknown;
+  artistId?: unknown;
 };
 
 type SpotifyTrack = {
@@ -25,7 +26,7 @@ type SpotifyTrack = {
   restrictions?: {
     reason?: string;
   };
-  artists: Array<{ name: string }>;
+  artists: Array<{ id: string; name: string }>;
   album: {
     images: Array<{ url: string }>;
   };
@@ -37,6 +38,15 @@ type SpotifyTrackSearchResponse = {
   };
 };
 
+type SpotifyArtistSearchResponse = {
+  artists: {
+    items: Array<{
+      id: string;
+      name: string;
+    }>;
+  };
+};
+
 type SpotifyRequestFailure = {
   status: number;
   message: string;
@@ -44,6 +54,15 @@ type SpotifyRequestFailure = {
 };
 
 type SpotifyQueryParams = Record<string, string | number | boolean | undefined>;
+type GeneratedTrack = {
+  id: string;
+  name: string;
+  artists: string[];
+  albumImage: string | null;
+  uri: string;
+  preview_url: string | null;
+  artistIds: string[];
+};
 
 async function spotifyRequest<T>(
   options: {
@@ -123,17 +142,25 @@ export async function POST(request: NextRequest) {
     return jsonError(400, parsed.message, parsed.details);
   }
 
-  const { query, requestedTrackCount, vibe } = parsed.value;
+  const { query, requestedTrackCount, vibe, selectedArtistId } = parsed.value;
 
   try {
     const queryPlan = buildSearchQueries(query, vibe);
     const spotifySearchLimit = resolveSpotifySearchLimit(requestedTrackCount);
-    const tracks = await generateFromSearchQueries(queryPlan, spotifySearchLimit, accessToken);
+    const requiredArtistId =
+      selectedArtistId || (query ? await resolveArtistId(query, accessToken) : null);
+    const tracks = await generateFromSearchQueries(
+      queryPlan,
+      spotifySearchLimit,
+      accessToken,
+      requiredArtistId,
+    );
 
     traceGenerate("search_generation_complete", {
       selectedVibe: vibe,
       plannedQueries: queryPlan,
       spotifySearchLimit,
+      requiredArtistId,
       tracksReturned: tracks.length,
       requestedTrackCount,
     });
@@ -142,7 +169,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ tracks: [], warning: NO_TRACKS_WARNING });
     }
 
-    return NextResponse.json({ tracks: tracks.slice(0, requestedTrackCount) });
+    return NextResponse.json({
+      tracks: tracks.slice(0, requestedTrackCount).map((track) => ({
+        id: track.id,
+        name: track.name,
+        artists: track.artists,
+        albumImage: track.albumImage,
+        uri: track.uri,
+        preview_url: track.preview_url,
+      })),
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown generation failure.";
     console.error("Playlist generation failed", message);
@@ -170,10 +206,19 @@ function resolveSpotifySearchLimit(requestedTrackCount: number): number {
 }
 
 function parseGenerateRequest(body: GenerateRequestBody):
-  | { ok: true; value: { query: string; requestedTrackCount: number; vibe: VibeKey | null } }
+  | {
+      ok: true;
+      value: {
+        query: string;
+        requestedTrackCount: number;
+        vibe: VibeKey | null;
+        selectedArtistId: string | null;
+      };
+    }
   | { ok: false; message: string; details: Record<string, unknown> } {
   const query = normalizeQuery(typeof body.query === "string" ? body.query : "");
   const vibe = normalizeVibeKey(body.vibe);
+  const selectedArtistId = normalizeQuery(typeof body.artistId === "string" ? body.artistId : "");
 
   if (!vibe && query.length < 2) {
     return {
@@ -189,6 +234,7 @@ function parseGenerateRequest(body: GenerateRequestBody):
       query,
       requestedTrackCount: resolveRequestedTrackCount(body.limit),
       vibe,
+      selectedArtistId: selectedArtistId || null,
     },
   };
 }
@@ -197,8 +243,9 @@ async function generateFromSearchQueries(
   queries: string[],
   spotifySearchLimit: number,
   accessToken: string,
-): Promise<Array<ReturnType<typeof mapTracks>[number]>> {
-  const tracksById = new Map<string, ReturnType<typeof mapTracks>[number]>();
+  requiredArtistId: string | null,
+): Promise<GeneratedTrack[]> {
+  const tracksById = new Map<string, GeneratedTrack>();
 
   for (const query of queries) {
     const search = await searchTracks(query, spotifySearchLimit, accessToken);
@@ -211,7 +258,10 @@ async function generateFromSearchQueries(
     }
 
     const mapped = mapTracks(search.data.tracks.items);
-    for (const track of mapped) {
+    const filtered = requiredArtistId
+      ? mapped.filter((track) => track.artistIds.includes(requiredArtistId))
+      : mapped;
+    for (const track of filtered) {
       if (!tracksById.has(track.id)) {
         tracksById.set(track.id, track);
       }
@@ -220,11 +270,36 @@ async function generateFromSearchQueries(
     traceGenerate("search_query_result", {
       query,
       returned: mapped.length,
+      returnedAfterArtistFilter: filtered.length,
       dedupedTotal: tracksById.size,
     });
   }
 
   return Array.from(tracksById.values());
+}
+
+async function resolveArtistId(query: string, accessToken: string): Promise<string | null> {
+  const artistSearch = await spotifyRequest<SpotifyArtistSearchResponse>({
+    path: "/search",
+    accessToken,
+    method: "GET",
+    query: {
+      q: query,
+      type: "artist",
+      limit: 5,
+    },
+  });
+
+  if (!artistSearch.ok || artistSearch.data.artists.items.length === 0) {
+    return null;
+  }
+
+  const normalizedQuery = normalizeForMatch(query);
+  const exactMatch = artistSearch.data.artists.items.find(
+    (artist) => normalizeForMatch(artist.name) === normalizedQuery,
+  );
+
+  return (exactMatch ?? artistSearch.data.artists.items[0])?.id ?? null;
 }
 
 async function searchTracks(query: string, limit: number, accessToken: string) {
@@ -302,6 +377,7 @@ function mapTracks(tracks: SpotifyTrack[]) {
       id: track.id,
       name: track.name,
       artists: track.artists.map((artist) => artist.name),
+      artistIds: track.artists.map((artist) => artist.id),
       albumImage: track.album.images[0]?.url ?? null,
       uri: track.uri,
       preview_url: track.preview_url,
@@ -310,6 +386,10 @@ function mapTracks(tracks: SpotifyTrack[]) {
 
 function normalizeQuery(value: string): string {
   return value.trim().replace(/\s+/g, " ");
+}
+
+function normalizeForMatch(value: string): string {
+  return normalizeQuery(value).toLowerCase();
 }
 
 function sanitizeSpotifyLimit(value: unknown): number {
