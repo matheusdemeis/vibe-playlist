@@ -43,4 +43,5 @@ next-env.d.ts
 
 # md
 phase-1-audit.md
-phase-2-audit.md
+phase-2-reliability.md
+phase-3-redesign.md

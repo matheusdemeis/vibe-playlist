@@ -1,78 +1,109 @@
 "use client";
 
-import type { PlaylistGenerationResponse } from "@/lib/playlist/generate";
+import { Icon } from "@/components/ui/Icon";
 
+type DisplayTrack = {
+  id: string;
+  name: string;
+  artists: string[];
+  image?: string | null;
+  albumImage?: string | null;
+  explicit?: boolean;
+};
 type TrackListProps = {
   disabled?: boolean;
   canRemove?: boolean;
-  tracks: PlaylistGenerationResponse["tracks"];
-  lockedTrackIds: string[];
-  onToggleLock: (trackId: string) => void;
-  onRemoveTrack: (trackId: string) => void;
+  tracks: DisplayTrack[];
+  lockedTrackIds?: string[];
+  onToggleLock?: (trackId: string) => void;
+  onRemoveTrack?: (trackId: string) => void;
 };
 
-// Presentational only: keep Spotify API/network calls in server routes.
-export function TrackList({ disabled = false, canRemove = true, tracks, lockedTrackIds, onToggleLock, onRemoveTrack }: TrackListProps) {
+export function TrackList({
+  disabled = false,
+  canRemove = true,
+  tracks,
+  lockedTrackIds = [],
+  onToggleLock,
+  onRemoveTrack,
+}: TrackListProps) {
   return (
-    <ul className="space-y-2" aria-live="polite">
-      {tracks.map((track) => {
+    <ol className="track-list" aria-label="Playlist tracks">
+      {tracks.map((track, index) => {
         const isLocked = lockedTrackIds.includes(track.id);
-
+        const image = track.image ?? track.albumImage;
         return (
-          <li
-            key={track.id}
-            className="flex flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/70 p-3 sm:flex-row sm:items-center"
-          >
-            {track.image ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={track.image}
-                alt={`${track.album} cover`}
-                className="h-12 w-12 rounded-lg object-cover"
-              />
-            ) : (
-              <div className="h-12 w-12 rounded-lg bg-zinc-800" />
-            )}
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium text-zinc-100">{track.name}</p>
-              <p className="truncate text-xs text-zinc-400">{track.artists.join(", ")}</p>
-              <div className="mt-1 flex flex-wrap gap-1">
-                {track.explicit ? (
-                  <span className="rounded-full bg-zinc-700 px-2 py-0.5 text-[10px] font-medium text-zinc-200">
-                    Explicit
-                  </span>
-                ) : null}
-                {track.preview_url ? (
-                  <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-medium text-emerald-300">
-                    Has Preview
-                  </span>
-                ) : null}
-              </div>
+          <li key={track.id} className="track-row">
+            <span className="track-number" aria-hidden="true">
+              {String(index + 1).padStart(2, "0")}
+            </span>
+            <div className="track-art" aria-hidden="true">
+              <Icon name="music" width="18" height="18" />
+              {image && (
+                // Spotify album art stays unmodified; native loading avoids a new image proxy dependency.
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={image}
+                  alt=""
+                  width={44}
+                  height={44}
+                  loading="lazy"
+                  onError={(event) => {
+                    event.currentTarget.style.display = "none";
+                  }}
+                />
+              )}
             </div>
-            <button
-              type="button"
-              disabled={disabled}
-              onClick={() => onToggleLock(track.id)}
-              aria-pressed={isLocked}
-              className={`rounded-full border px-3 py-1.5 text-xs transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 ${
-                isLocked
-                  ? "border-emerald-300 bg-emerald-500/20 text-emerald-200"
-                  : "border-zinc-700 text-zinc-300 hover:bg-zinc-800"
-              }`}
-            >
-              {isLocked ? "Locked" : "Lock"}
-            </button>
-            <button
-              type="button"
-              disabled={disabled || !canRemove}
-              onClick={() => onRemoveTrack(track.id)}
-              className="rounded-full border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 transition-colors hover:bg-zinc-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
-            >
-              Remove
-            </button>
+            <div className="track-copy">
+              <a
+                href={`https://open.spotify.com/track/${track.id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {track.name}
+                <span className="sr-only"> — open in Spotify</span>
+              </a>
+              <p>
+                {track.artists.join(", ")}
+                {track.explicit && (
+                  <span className="explicit-tag" aria-label="Explicit">
+                    E
+                  </span>
+                )}
+              </p>
+            </div>
+            {(onToggleLock || onRemoveTrack) && (
+              <div className="track-controls">
+                {onToggleLock && (
+                  <button
+                    type="button"
+                    className="icon-button"
+                    aria-pressed={isLocked}
+                    aria-label={`${isLocked ? "Unlock" : "Lock"} ${track.name}`}
+                    title={isLocked ? "Unlock track" : "Keep on regeneration"}
+                    disabled={disabled}
+                    onClick={() => onToggleLock(track.id)}
+                  >
+                    <Icon name="lock" width="16" height="16" />
+                  </button>
+                )}
+                {onRemoveTrack && (
+                  <button
+                    type="button"
+                    className="icon-button"
+                    aria-label={`Remove ${track.name}`}
+                    title="Remove track"
+                    disabled={disabled || !canRemove}
+                    onClick={() => onRemoveTrack(track.id)}
+                  >
+                    <Icon name="close" width="16" height="16" />
+                  </button>
+                )}
+              </div>
+            )}
           </li>
         );
       })}
-    </ul>
+    </ol>
   );
 }
