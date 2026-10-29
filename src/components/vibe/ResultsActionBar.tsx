@@ -3,6 +3,9 @@
 type ResultsActionBarProps = {
   trackCount: number;
   isBusy: boolean;
+  canSave?: boolean;
+  canEdit?: boolean;
+  saveLabel?: string;
   onRegenerate: () => void;
   onShuffle: () => void;
   onSave: () => void;
@@ -12,6 +15,9 @@ type ResultsActionBarProps = {
 export function ResultsActionBar({
   trackCount,
   isBusy,
+  canSave = true,
+  canEdit = true,
+  saveLabel = "Save to Spotify",
   onRegenerate,
   onShuffle,
   onSave,
@@ -31,7 +37,7 @@ export function ResultsActionBar({
         <button
           type="button"
           onClick={onShuffle}
-          disabled={isBusy}
+          disabled={isBusy || !canEdit}
           className="rounded-full border border-zinc-700 bg-zinc-900 px-4 py-2 text-xs font-medium text-zinc-200 transition-colors hover:bg-zinc-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
         >
           Shuffle Order
@@ -39,10 +45,10 @@ export function ResultsActionBar({
         <button
           type="button"
           onClick={onSave}
-          disabled={isBusy}
+          disabled={isBusy || !canSave || trackCount === 0}
           className="rounded-full bg-emerald-500 px-4 py-2 text-xs font-semibold text-zinc-950 transition-colors hover:bg-emerald-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-300 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {isBusy ? "Please wait..." : "Save to Spotify"}
+          {isBusy ? "Please wait..." : canSave ? saveLabel : "Saved / check Spotify"}
         </button>
       </div>
     </div>

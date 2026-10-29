@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   CURATED_GENRES,
   DEFAULT_VIBE_INPUT,
+  readVibeBuilderQuery,
   TEMPO_OPTIONS,
   TRACK_COUNT_OPTIONS,
   VIBE_PRESETS,
@@ -18,29 +19,7 @@ function readStateFromQuery(): VibeBuilderInput {
     return DEFAULT_VIBE_INPUT;
   }
 
-  const params = new URLSearchParams(window.location.search);
-  const vibes = params.get("vibes")?.split(",").filter(Boolean) ?? [];
-  const genres = params.get("genres")?.split(",").filter(Boolean) ?? [];
-  const energy = Number(params.get("energy"));
-  const valence = Number(params.get("valence"));
-  const tempo = params.get("tempo");
-  const trackCount = Number(params.get("trackCount"));
-  const explicit = params.get("explicit");
-
-  return {
-    vibes,
-    genres,
-    energy: Number.isFinite(energy) ? energy : DEFAULT_VIBE_INPUT.energy,
-    valence: Number.isFinite(valence) ? valence : DEFAULT_VIBE_INPUT.valence,
-    tempo:
-      TEMPO_OPTIONS.includes(tempo as TempoOption)
-        ? (tempo as TempoOption)
-        : DEFAULT_VIBE_INPUT.tempo,
-    trackCount: TRACK_COUNT_OPTIONS.includes(trackCount as 20 | 30 | 50)
-      ? (trackCount as 20 | 30 | 50)
-      : DEFAULT_VIBE_INPUT.trackCount,
-    explicit: explicit === null ? DEFAULT_VIBE_INPUT.explicit : explicit === "true",
-  };
+  return readVibeBuilderQuery(new URLSearchParams(window.location.search));
 }
 
 export default function VibePage() {
@@ -106,8 +85,12 @@ export default function VibePage() {
   };
 
   const handleDeletePreset = (presetId: string) => {
-    deletePreset(presetId);
-    setPresets(listPresets());
+    try {
+      deletePreset(presetId);
+      setPresets(listPresets());
+    } catch {
+      setPresetError("Could not update presets. Check your browser storage settings.");
+    }
   };
 
   const resultQuery = useMemo(() => {
@@ -139,6 +122,7 @@ export default function VibePage() {
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">
             <input
+              aria-label="Preset name"
               value={presetName}
               onChange={(event) => setPresetName(event.target.value)}
               placeholder="Preset name"
@@ -215,12 +199,14 @@ export default function VibePage() {
           </div>
         </fieldset>
 
+        <p className="text-sm text-zinc-600">Mood and genre guide Spotify catalog searches. Audio analysis is unavailable, so energy, valence, and tempo controls are disabled.</p>
         <div className="space-y-2.5">
           <label htmlFor="energy-slider" className="block text-sm font-medium text-zinc-900">
             Energy: <span className="font-semibold">{state.energy}</span>
           </label>
           <input
             id="energy-slider"
+            disabled
             type="range"
             min={0}
             max={100}
@@ -238,6 +224,7 @@ export default function VibePage() {
           </label>
           <input
             id="valence-slider"
+            disabled
             type="range"
             min={0}
             max={100}
@@ -255,6 +242,7 @@ export default function VibePage() {
           </label>
           <select
             id="tempo-select"
+            disabled
             value={state.tempo}
             onChange={(event) =>
               setState((prev) => ({ ...prev, tempo: event.target.value as TempoOption }))

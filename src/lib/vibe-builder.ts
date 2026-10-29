@@ -58,7 +58,7 @@ export function validateVibeBuilderInput(input: VibeBuilderInput): ValidationRes
     errors.push("Select at least one vibe or one genre.");
   }
 
-  if (input.trackCount < 10 || input.trackCount > 100) {
+  if (!Number.isInteger(input.trackCount) || input.trackCount < 10 || input.trackCount > 100) {
     errors.push("Track count must be between 10 and 100.");
   }
 
@@ -90,4 +90,23 @@ export function buildVibeGeneratorRequest(input: VibeBuilderInput): VibeGenerato
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+export function readVibeBuilderQuery(params: URLSearchParams): VibeBuilderInput {
+  const numberOrDefault = (key: string, fallback: number) => {
+    const raw = params.get(key);
+    if (raw === null || raw.trim() === "") return fallback;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
+  const tempo = params.get("tempo");
+  return {
+    vibes: params.get("vibes")?.split(",").filter(Boolean) ?? [],
+    genres: params.get("genres")?.split(",").filter(Boolean) ?? [],
+    energy: numberOrDefault("energy", DEFAULT_VIBE_INPUT.energy),
+    valence: numberOrDefault("valence", DEFAULT_VIBE_INPUT.valence),
+    tempo: TEMPO_OPTIONS.includes(tempo as TempoOption) ? tempo as TempoOption : DEFAULT_VIBE_INPUT.tempo,
+    trackCount: numberOrDefault("trackCount", DEFAULT_VIBE_INPUT.trackCount),
+    explicit: params.has("explicit") ? params.get("explicit") === "true" : DEFAULT_VIBE_INPUT.explicit,
+  };
 }

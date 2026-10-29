@@ -1,275 +1,107 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  addTracksInBatches,
-  buildTrackUris,
-  chunkTrackUris,
-  normalizeTrackUris,
-  savePlaylistToSpotify,
-} from "./save";
+import { randomUUID } from "node:crypto";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { addTracksInBatches, buildTrackUris, chunkTrackUris, PlaylistSaveError, savePlaylistToSpotify } from "./save";
+import { createSaveReceipt, fingerprintPlaylist, getSaveSigningKey } from "./save-receipt";
 
-describe("chunkTrackUris", () => {
-  it("splits URIs into fixed-size chunks", () => {
-    const uris = Array.from({ length: 205 }, (_, index) => `spotify:track:${index + 1}`);
-    const chunks = chunkTrackUris(uris, 100);
+const playlistId = "p".repeat(22);
+const uri = (index: number) => `spotify:track:${String(index).padStart(22, "0")}`;
+const json = (data: unknown, status = 200, headers = {}) => new Response(JSON.stringify(data), { status, headers });
+const input = () => ({ accessToken: "test-token", grantedScopes: ["playlist-modify-private", "playlist-read-private"], name: "Test mix", description: "Test", isPublic: false, trackUris: [uri(1), uri(2)], draftId: randomUUID() });
+beforeEach(() => vi.stubEnv("SPOTIFY_CLIENT_SECRET", "test-only-signing-secret"));
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
-    expect(chunks).toHaveLength(3);
-    expect(chunks[0]).toHaveLength(100);
-    expect(chunks[1]).toHaveLength(100);
-    expect(chunks[2]).toHaveLength(5);
+describe("track URI handling", () => {
+  it("normalizes, deduplicates, and rejects invalid identifiers", () => {
+    expect(buildTrackUris([uri(1), String(1).padStart(22, "0"), "invalid"])).toEqual([uri(1)]);
+    expect(chunkTrackUris(Array.from({ length: 205 }, (_, i) => uri(i))).map((batch) => batch.length)).toEqual([100, 100, 5]);
+    expect(chunkTrackUris([uri(1), uri(2)], 0).length).toBe(2);
   });
 });
 
-describe("addTracksInBatches", () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it("posts all URI batches to Spotify", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const url = String(input);
-      if (url.endsWith("/me")) {
-        return new Response(JSON.stringify({ id: "user-123" }), { status: 200 });
-      }
-      return new Response(JSON.stringify({ snapshot_id: "ok" }), { status: 201 });
-    });
-
-    const uris = Array.from(
-      { length: 205 },
-      (_, index) => `spotify:track:${String(index + 1).padStart(22, "A")}`,
-    );
-    const result = await addTracksInBatches(
-      "token-123",
-      "playlist-abc",
-      uris,
-      100,
-    );
-
-    expect(fetchMock).toHaveBeenCalledTimes(4);
-
-    const firstCallArgs = fetchMock.mock.calls[1];
-    const secondCallArgs = fetchMock.mock.calls[2];
-    const thirdCallArgs = fetchMock.mock.calls[3];
-
-    expect(firstCallArgs[0]).toContain("/playlists/playlist-abc/items");
-    expect(secondCallArgs[0]).toContain("/playlists/playlist-abc/items");
-    expect(thirdCallArgs[0]).toContain("/playlists/playlist-abc/items");
-
-    const firstBody = JSON.parse((firstCallArgs[1]?.body as string) ?? "{}") as { uris: string[] };
-    const secondBody = JSON.parse((secondCallArgs[1]?.body as string) ?? "{}") as { uris: string[] };
-    const thirdBody = JSON.parse((thirdCallArgs[1]?.body as string) ?? "{}") as { uris: string[] };
-
-    expect(firstBody.uris).toHaveLength(100);
-    expect(secondBody.uris).toHaveLength(100);
-    expect(thirdBody.uris).toHaveLength(5);
-    expect(firstCallArgs[1]?.method).toBe("POST");
-    const firstHeaders = firstCallArgs[1]?.headers as Headers;
-    expect(firstHeaders.get("Authorization")).toBe("Bearer token-123");
-    expect(firstHeaders.get("Content-Type")).toBe("application/json");
-    expect(firstHeaders.get("Accept")).toBe("application/json");
-    expect(result.snapshotId).toBe("ok");
+describe("safe Spotify insertion", () => {
+  it("sends bounded batches without unrelated profile or filtering calls", async () => {
+    const fetcher = vi.fn(async () => json({ snapshot_id: "snapshot" }, 201));
+    vi.stubGlobal("fetch", fetcher);
+    const result = await addTracksInBatches("test", playlistId, Array.from({ length: 205 }, (_, i) => uri(i)));
     expect(result.tracksAddedCount).toBe(205);
+    expect(fetcher).toHaveBeenCalledTimes(3);
   });
-
-  it("throws with spotify status when add-tracks request fails", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const url = String(input);
-      if (url.endsWith("/me")) {
-        return new Response(JSON.stringify({ id: "user-123" }), { status: 200 });
-      }
-      if (url.includes("/playlists/playlist-abc") && !url.endsWith("/items")) {
-        return new Response(
-          JSON.stringify({ owner: { id: "user-123" }, collaborative: false, public: false }),
-          { status: 200 },
-        );
-      }
-      return new Response(JSON.stringify({ error: { status: 403, message: "Forbidden" } }), { status: 403 });
-    });
-
-    await expect(
-      addTracksInBatches("token-123", "playlist-abc", ["spotify:track:4iV5W9uYEdYUVa79Axb7Rh"], 100),
-    ).rejects.toMatchObject({
-      status: 403,
-      code: "spotify_add_tracks_failed",
-    });
-    expect(fetchMock).toHaveBeenCalled();
-  });
-
-  it("requests /v1/tracks/{id} on 403 filtering flow", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const url = String(input);
-      if (url.endsWith("/me")) {
-        return new Response(JSON.stringify({ id: "user-123" }), { status: 200 });
-      }
-      if (url === "https://api.spotify.com/v1/tracks/4iV5W9uYEdYUVa79Axb7Rh") {
-        return new Response(
-          JSON.stringify({
-            id: "4iV5W9uYEdYUVa79Axb7Rh",
-            explicit: false,
-          }),
-          { status: 200 },
-        );
-      }
-      if (url.includes("/playlists/playlist-abc/items")) {
-        return new Response(JSON.stringify({ error: { status: 403, message: "Forbidden" } }), {
-          status: 403,
-        });
-      }
-      if (url.includes("/playlists/playlist-abc") && !url.endsWith("/items")) {
-        return new Response(
-          JSON.stringify({ owner: { id: "user-123" }, collaborative: false, public: false }),
-          { status: 200 },
-        );
-      }
-      return new Response(JSON.stringify({}), { status: 200 });
-    });
-
-    await expect(
-      addTracksInBatches(
-        "token-123",
-        "playlist-abc",
-        ["spotify:track:4iV5W9uYEdYUVa79Axb7Rh"],
-        100,
-      ),
-    ).rejects.toMatchObject({
-      status: 403,
-      code: "spotify_add_tracks_failed",
-    });
-
-    const tracksLookupCall = fetchMock.mock.calls.find(
-      ([input]) => String(input) === "https://api.spotify.com/v1/tracks/4iV5W9uYEdYUVa79Axb7Rh",
-    );
-    expect(tracksLookupCall).toBeDefined();
-    expect(String(tracksLookupCall?.[0])).toContain("/tracks/4iV5W9uYEdYUVa79Axb7Rh");
+  it.each([403, 429, 500])("does not blindly retry or filter tracks on %s", async (status) => {
+    const fetcher = vi.fn(async () => json({ error: { message: "Rejected" } }, status, { "Retry-After": "42" }));
+    vi.stubGlobal("fetch", fetcher);
+    await expect(addTracksInBatches("test", playlistId, [uri(1)])).rejects.toMatchObject({ status, retrySafe: false, ...(status === 429 ? { retryAfterSeconds: 42 } : {}) });
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 });
 
-describe("normalizeTrackUris", () => {
-  it("keeps spotify uris and converts raw track ids", () => {
-    const uris = normalizeTrackUris([
-      "spotify:track:4iV5W9uYEdYUVa79Axb7Rh",
-      "4iV5W9uYEdYUVa79Axb7Rh",
-      "invalid",
-      " ",
-    ]);
-
-    expect(uris).toEqual(["spotify:track:4iV5W9uYEdYUVa79Axb7Rh"]);
-  });
-});
-
-describe("savePlaylistToSpotify", () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it("creates private playlist when requested visibility is private", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-      const url = String(input);
-      if (url.endsWith("/me/playlists")) {
-        return new Response(
-          JSON.stringify({
-            id: "playlist-private",
-            public: false,
-            owner: { id: "user-123" },
-            external_urls: { spotify: "https://open.spotify.com/playlist/playlist-private" },
-          }),
-          { status: 201 },
-        );
-      }
-      if (url.endsWith("/me")) {
-        return new Response(
-          JSON.stringify({ id: "user-123", explicit_content: { filter_enabled: false } }),
-          { status: 200 },
-        );
-      }
-      if (url.endsWith("/playlists/playlist-private/items")) {
-        return new Response(JSON.stringify({ snapshot_id: "snap-1" }), { status: 201 });
-      }
-      if (url.endsWith("/playlists/playlist-private") && init?.method === "PUT") {
-        return new Response(null, { status: 200 });
-      }
-      if (url.endsWith("/playlists/playlist-private") && init?.method === "GET") {
-        return new Response(JSON.stringify({ public: false }), { status: 200 });
-      }
-      return new Response(JSON.stringify({}), { status: 200 });
+describe("playlist saving and recovery", () => {
+  it("preserves private visibility and deduplicates repeated/concurrent saves of a draft", async () => {
+    const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/me")) return json({ id: "owner" });
+      if (url.endsWith("/me/playlists")) { expect(JSON.parse(String(init?.body)).public).toBe(false); return json({ id: playlistId, public: false }, 201); }
+      return json({ snapshot_id: "snapshot" }, 201);
     });
-
-    const result = await savePlaylistToSpotify({
-      accessToken: "token-123",
-      grantedScopes: ["playlist-modify-private", "playlist-modify-public"],
-      name: "Private Playlist",
-      description: "desc",
-      isPublic: false,
-      trackUris: ["spotify:track:4iV5W9uYEdYUVa79Axb7Rh"],
-    });
-
-    const createCall = fetchMock.mock.calls.find(([input]) =>
-      String(input).endsWith("/me/playlists"),
-    );
-    expect(createCall).toBeDefined();
-    const createPayload = JSON.parse(String(createCall?.[1]?.body ?? "{}")) as { public?: boolean };
-    expect(createPayload.public).toBe(false);
-    expect(result.playlistName).toBe("Private Playlist");
-    expect(result.isPublic).toBe(false);
+    vi.stubGlobal("fetch", fetcher);
+    const draft = input();
+    const [one, two] = await Promise.all([savePlaylistToSpotify(draft), savePlaylistToSpotify(draft)]);
+    const three = await savePlaylistToSpotify(draft);
+    expect(one).toEqual(two);
+    expect(one).toEqual(three);
+    expect(one.isPublic).toBe(false);
+    expect(fetcher.mock.calls.filter(([url]) => url.endsWith("/me/playlists"))).toHaveLength(1);
+    expect(fetcher.mock.calls.filter(([url]) => url.endsWith("/items"))).toHaveLength(1);
   });
-
-  it("trusts create response visibility when post-save GET is inconsistent", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-      const url = String(input);
-      if (url.endsWith("/me/playlists")) {
-        return new Response(
-          JSON.stringify({
-            id: "playlist-private",
-            public: false,
-            owner: { id: "user-123" },
-            external_urls: { spotify: "https://open.spotify.com/playlist/playlist-private" },
-          }),
-          { status: 201 },
-        );
-      }
-      if (url.endsWith("/me")) {
-        return new Response(
-          JSON.stringify({ id: "user-123", explicit_content: { filter_enabled: false } }),
-          { status: 200 },
-        );
-      }
-      if (url.endsWith("/playlists/playlist-private/items")) {
-        return new Response(JSON.stringify({ snapshot_id: "snap-1" }), { status: 201 });
-      }
-      if (url.endsWith("/playlists/playlist-private") && init?.method === "PUT") {
-        return new Response(null, { status: 200 });
-      }
-      if (url.endsWith("/playlists/playlist-private") && init?.method === "GET") {
-        return new Response(JSON.stringify({ id: "playlist-private", public: true }), { status: 200 });
-      }
-      return new Response(JSON.stringify({}), { status: 200 });
+  it("returns signed recovery after uncertain insertion and resumes only missing tracks", async () => {
+    let failInsert = true;
+    const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/me")) return json({ id: "owner" });
+      if (url.endsWith("/me/playlists")) return json({ id: playlistId, public: false }, 201);
+      if (url.endsWith(`/playlists/${playlistId}`)) return json({ owner: { id: "owner" }, public: false });
+      if (init?.method === "GET") return json({ items: [{ item: { uri: uri(1) } }], next: null });
+      if (failInsert) { failInsert = false; return json({}, 503); }
+      expect(JSON.parse(String(init?.body)).uris).toEqual([uri(2)]);
+      return json({ snapshot_id: "complete" }, 201);
     });
-
-    const result = await savePlaylistToSpotify({
-      accessToken: "token-123",
-      grantedScopes: ["playlist-modify-private", "playlist-modify-public"],
-      name: "Private Playlist",
-      description: "desc",
-      isPublic: false,
-      trackUris: ["spotify:track:4iV5W9uYEdYUVa79Axb7Rh"],
-    });
-
-    expect(result.isPublic).toBe(false);
+    vi.stubGlobal("fetch", fetcher);
+    const draft = input();
+    let failure: PlaylistSaveError | undefined;
+    try { await savePlaylistToSpotify(draft); } catch (error) { failure = error as PlaylistSaveError; }
+    expect(failure?.recovery?.playlistId).toBe(playlistId);
+    expect(failure?.retrySafe).toBe(false);
+    const result = await savePlaylistToSpotify({ ...draft, recoveryToken: failure!.recovery!.recoveryToken });
+    expect(result.tracksAddedCount).toBe(2);
+    expect(fetcher.mock.calls.filter(([url]) => url.endsWith("/me/playlists"))).toHaveLength(1);
+    expect(fetcher.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(3);
   });
-});
-
-describe("buildTrackUris", () => {
-  it("converts raw ids to spotify track uris and removes invalid entries", () => {
-    const uris = buildTrackUris([
-      "4iV5W9uYEdYUVa79Axb7Rh",
-      "spotify:track:1301WleyT98MSxVHPZCA6M",
-      "spotify:track:not-a-valid-id",
-      "",
-      "invalid-id",
-    ]);
-
-    expect(uris).toEqual([
-      "spotify:track:4iV5W9uYEdYUVa79Axb7Rh",
-      "spotify:track:1301WleyT98MSxVHPZCA6M",
-    ]);
+  it("does not repeat an uncertain creation request", async () => {
+    const fetcher = vi.fn(async (url: string) => url.endsWith("/me") ? json({ id: "owner" }) : json({}, 500));
+    vi.stubGlobal("fetch", fetcher);
+    const draft = input();
+    await expect(savePlaylistToSpotify(draft)).rejects.toMatchObject({ code: "save_outcome_unknown", retrySafe: false });
+    await expect(savePlaylistToSpotify(draft)).rejects.toMatchObject({ code: "save_outcome_unknown" });
+    expect(fetcher.mock.calls.filter(([url]) => url.endsWith("/me/playlists"))).toHaveLength(1);
+  });
+  it.each([
+    { owner: "owner", uris: [uri(1), uri(2)], error: null },
+    { owner: "owner", uris: [uri(2), uri(1)], error: "playlist_changed" },
+    { owner: "someone-else", uris: [], error: "playlist_owner_mismatch" },
+  ])("recovery reads existing contents without writing: $error", async ({ owner, uris, error }) => {
+    const draft = input();
+    const recoveryToken = createSaveReceipt({ playlistId, ownerId: "owner", fingerprint: fingerprintPlaylist(draft) }, getSaveSigningKey());
+    const fetcher = vi.fn(async (url: string) => {
+      if (url.endsWith("/me")) return json({ id: "owner" });
+      if (url.endsWith(`/playlists/${playlistId}`)) return json({ owner: { id: owner }, public: false });
+      return json({ items: uris.map((uri) => ({ item: { uri } })), next: null });
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const result = savePlaylistToSpotify({ ...draft, recoveryToken });
+    if (error) await expect(result).rejects.toMatchObject({ code: error, recovery: { playlistId } });
+    else expect((await result).tracksAddedCount).toBe(2);
+    const calls = fetcher.mock.calls as unknown as Array<[string, RequestInit]>;
+    expect(calls.every(([, init]) => init.method === "GET")).toBe(true);
+  });
+  it("keeps missing visibility unknown", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => url.endsWith("/me") ? json({ id: "owner" }) : url.endsWith("/me/playlists") ? json({ id: playlistId }, 201) : json({ snapshot_id: "ok" }, 201)));
+    expect((await savePlaylistToSpotify(input())).isPublic).toBeNull();
   });
 });

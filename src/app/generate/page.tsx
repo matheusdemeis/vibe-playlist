@@ -1,252 +1,104 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { VIBE_OPTIONS, type VibeKey } from "@/lib/vibes";
+import { apiErrorMessage, retryDelayMs } from "@/lib/storage/playlist-draft";
+import { usePlaylistDraft } from "@/components/vibe/usePlaylistDraft";
+import { useSpotifyConnection } from "@/components/vibe/useSpotifyConnection";
 
 type GenerateResponse = {
   warning?: string;
-  tracks: Array<{
-    id: string;
-    name: string;
-    artists: string[];
-    albumImage: string | null;
-    uri: string;
-    preview_url: string | null;
-  }>;
+  tracks: Array<{ id: string; name: string; artists: string[]; albumImage: string | null; uri: string; preview_url: string | null }>;
 };
-
-type ErrorResponse = {
-  error?:
-    | string
-    | {
-        message?: string;
-        status?: number;
-        details?: unknown;
-      };
-  code?: string;
-  details?: Record<string, unknown>;
-};
-
-type SavePlaylistResponse = {
-  playlistName: string;
-  playlistId: string;
-  playlistUrl: string;
-  isPublic: boolean | null;
-  tracksAddedCount: number;
-  tracksAdded: boolean;
-  visibility: {
-    requested: boolean;
-    final: boolean | null;
-  };
-};
-
 type GenerateStatus = "idle" | "loading" | "success" | "error";
-type SaveStatus = "idle" | "saving" | "success" | "error";
 type PlaylistVisibility = "private" | "public";
 
 export default function Home() {
-  const [isConnected, setIsConnected] = useState<boolean | null>(null);
-  const [spotifyScopes, setSpotifyScopes] = useState<string[]>([]);
-  const [showReconnectPrompt, setShowReconnectPrompt] = useState(false);
-  const [query, setQuery] = useState("");
-  const [selectedVibe, setSelectedVibe] = useState<VibeKey | null>(null);
-  const [limit, setLimit] = useState(25);
+  return <Suspense fallback={null}><Generator /></Suspense>;
+}
+
+function Generator() {
+  const params = useSearchParams();
+  const { connection, error: connectionError, checking, check, disconnect } = useSpotifyConnection();
+  const isConnected = connection?.connected ?? null;
+  const hasPlaylistScopes = connection?.hasRequiredPlaylistScopes ?? false;
+  const [query, setQuery] = useState(() => params.get("query") ?? "");
+  const [selectedVibe, setSelectedVibe] = useState<VibeKey | null>(() => {
+    const vibe = params.get("vibe");
+    return VIBE_OPTIONS.some((option) => option.value === vibe) ? vibe as VibeKey : null;
+  });
+  const [limit, setLimit] = useState(() => {
+    const raw = params.get("limit");
+    const count = Number(raw);
+    return raw && Number.isInteger(count) && count >= 1 && count <= 50 ? count : 25;
+  });
+  const [authMessage] = useState(() => {
+    const code = params.get("auth_error");
+    return !code ? null : code === "access_denied"
+      ? "Spotify connection was cancelled. Your mix and settings are preserved."
+      : "Spotify connection could not be completed. Please try connecting again.";
+  });
   const [isGenerating, setIsGenerating] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const [tracks, setTracks] = useState<GenerateResponse["tracks"]>([]);
   const [status, setStatus] = useState<GenerateStatus>("idle");
   const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
   const [playlistName, setPlaylistName] = useState("");
-  const [playlistDescription, setPlaylistDescription] = useState("Generated with Vibe Playlist");
+  const [playlistDescription, setPlaylistDescription] = useState("Generated with VibePlay");
   const [playlistVisibility, setPlaylistVisibility] = useState<PlaylistVisibility>("private");
-  const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
-  const [saveMessage, setSaveMessage] = useState<string | null>(null);
-  const [savedPlaylist, setSavedPlaylist] = useState<SavePlaylistResponse | null>(null);
-  const generateInFlightRef = useRef(false);
-  const saveInFlightRef = useRef(false);
+  const { draft, tracks, replaceTracks, save, isSaving, saveError, saveResult: savedPlaylist, canSave } = usePlaylistDraft<GenerateResponse["tracks"][number]>("vibeplay_simple_draft_v1");
+  const saveStatus = isSaving ? "saving" : savedPlaylist ? "success" : saveError || draft?.attempt?.message ? "error" : "idle";
+  const saveMessage = saveError ?? draft?.attempt?.message ?? null;
+  const retryAt = useRef(0);
+  const generateInFlightRef = useRef<AbortController | null>(null);
+  const returnParams = new URLSearchParams({ query, limit: String(limit), ...(selectedVibe ? { vibe: selectedVibe } : {}) });
+  const returnTo = `/generate?${returnParams.toString()}`;
+  const loginUrl = `/api/auth/login?returnTo=${encodeURIComponent(returnTo)}`;
+  const reconnectUrl = `/api/auth/reconnect?returnTo=${encodeURIComponent(returnTo)}`;
 
+  useEffect(() => () => generateInFlightRef.current?.abort(), []);
   useEffect(() => {
-    const checkConnection = async () => {
-      const [meResponse, statusResponse] = await Promise.all([
-        fetch("/api/me", { cache: "no-store" }),
-        fetch("/api/spotify/status", { cache: "no-store" }),
-      ]);
-
-      if (!meResponse.ok) {
-        setIsConnected(false);
-      } else {
-        const data = (await meResponse.json()) as { connected: boolean };
-        setIsConnected(data.connected);
-      }
-
-      if (statusResponse.ok) {
-        const data = (await statusResponse.json()) as { grantedScopes?: string[] };
-        setSpotifyScopes(Array.isArray(data.grantedScopes) ? data.grantedScopes : []);
-      } else {
-        setSpotifyScopes([]);
-      }
-    };
-
-    void checkConnection();
-  }, []);
-
-  const hasPlaylistScopes =
-    spotifyScopes.includes("playlist-modify-private") &&
-    spotifyScopes.includes("playlist-modify-public");
+    window.history.replaceState(null, "", returnTo);
+  }, [returnTo]);
 
   const handleGeneratePlaylist = async () => {
-    if (generateInFlightRef.current || isGenerating) {
-      return;
-    }
+    if (generateInFlightRef.current || isSaving) return;
+    if (Date.now() < retryAt.current) { setMessage(`Spotify asked us to wait. Try again in ${Math.ceil((retryAt.current - Date.now()) / 1000)} seconds.`); return; }
     const trimmedQuery = query.trim();
-    if (!trimmedQuery && !selectedVibe) {
-      setMessage("Please enter a search query or choose a vibe.");
-      setTracks([]);
-      return;
-    }
-
-    generateInFlightRef.current = true;
+    if (!trimmedQuery && !selectedVibe) { setMessage("Please enter an artist or track, or choose a vibe."); return; }
+    if (!Number.isInteger(limit) || limit < 1 || limit > 50) { setMessage("Choose a playlist length between 1 and 50 tracks."); return; }
+    const controller = new AbortController();
+    generateInFlightRef.current = controller;
     setIsGenerating(true);
     setStatus("loading");
     setMessage(null);
-    setTracks([]);
-
     try {
-      const response = await fetch("/api/generate", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          query: trimmedQuery,
-          limit,
-          ...(selectedVibe ? { vibe: selectedVibe } : {}),
-        }),
-      });
-      const data = (await response.json()) as GenerateResponse | ErrorResponse;
-
-      if (!response.ok) {
-        const errorValue = "error" in data ? data.error : undefined;
-        const errorMessage =
-          typeof errorValue === "string"
-            ? errorValue
-            : errorValue?.message ?? "Could not generate tracks.";
-        setMessage(errorMessage);
-        setStatus("error");
-        return;
-      }
-
-      const responseData = data as GenerateResponse;
-      setTracks(responseData.tracks);
-      if (responseData.warning) {
-        setMessage(responseData.warning);
-      } else if (responseData.tracks.length === 0) {
-        setMessage("We couldn't build that mix right now. Try another vibe or artist.");
-      } else {
-        setMessage("Tracks generated successfully.");
-      }
+      const response = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal, body: JSON.stringify({ query: trimmedQuery, limit, ...(selectedVibe ? { vibe: selectedVibe } : {}) }) });
+      const data = await response.json() as GenerateResponse;
+      if (controller.signal.aborted) return;
+      if (!response.ok) { retryAt.current = Date.now() + retryDelayMs(data, response.headers); setMessage(apiErrorMessage(data, "Could not generate tracks. Please retry.")); setStatus("error"); return; }
+      if (!data.tracks.length) { setMessage(data.warning ?? "No tracks found. Try another mood or artist; your previous mix is still available."); setStatus("error"); return; }
+      replaceTracks(data.tracks);
+      setMessage(data.warning ?? "Tracks generated successfully.");
       setStatus("success");
+      setIsSaveModalOpen(false);
     } catch {
-      setMessage("Unexpected error while generating tracks. Please try again.");
-      setStatus("error");
+      if (!controller.signal.aborted) { setMessage("Could not reach Spotify. Your previous mix is still available; please retry."); setStatus("error"); }
     } finally {
-      setIsGenerating(false);
-      generateInFlightRef.current = false;
+      if (generateInFlightRef.current === controller) { setIsGenerating(false); generateInFlightRef.current = null; }
     }
   };
 
   const handleOpenSaveModal = () => {
-    const fallbackName = "Vibe Playlist";
-    const trimmedQuery = query.trim();
-    setPlaylistName(trimmedQuery ? `${trimmedQuery} • Vibe Playlist` : fallbackName);
-    setPlaylistDescription("Generated with Vibe Playlist");
-    setPlaylistVisibility("private");
-    setSaveStatus("idle");
-    setSaveMessage(null);
+    if (!canSave) return;
+    setPlaylistName(draft?.attempt?.payload.name ?? (query.trim() ? `${query.trim()} • VibePlay` : "VibePlay Playlist"));
+    setPlaylistDescription(draft?.attempt?.payload.description ?? "Generated with VibePlay");
+    setPlaylistVisibility(draft?.attempt?.payload.isPublic ? "public" : "private");
     setIsSaveModalOpen(true);
   };
-
   const handleSavePlaylist = async () => {
-    if (saveInFlightRef.current || saveStatus === "saving") {
-      return;
-    }
-    const name = playlistName.trim();
-    if (!name) {
-      setSaveStatus("error");
-      setSaveMessage("Playlist name is required.");
-      return;
-    }
-
-    saveInFlightRef.current = true;
-    setSaveStatus("saving");
-    setSaveMessage("Saving playlist to Spotify...");
-    const savePayload = {
-      name,
-      description: playlistDescription.trim(),
-      isPublic: playlistVisibility === "public",
-      trackUris: tracks.map((track) => track.uri),
-    };
-
-    try {
-      if (process.env.NODE_ENV !== "production") {
-        console.log("[generate] save payload visibility", {
-          isPublic: savePayload.isPublic,
-          isPublicType: typeof savePayload.isPublic,
-        });
-      }
-      const response = await fetch("/api/vibe/save", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(savePayload),
-      });
-
-      const data = (await response.json()) as SavePlaylistResponse | ErrorResponse;
-      if (!response.ok) {
-        const errorValue = "error" in data ? data.error : undefined;
-        const errorMessage =
-          typeof errorValue === "string"
-            ? errorValue
-            : errorValue?.message ?? "Could not save playlist.";
-        if ("code" in data && data.code === "spotify_playlist_visibility_mismatch") {
-          const requested = data.details?.requestedPublic;
-          const actual = data.details?.actualPublic;
-          setSaveMessage(
-            `Playlist visibility mismatch (requested: ${String(requested)}, actual: ${String(actual)}).`,
-          );
-          setSaveStatus("error");
-          return;
-        }
-        if ("code" in data && data.code === "missing_scopes") {
-          setShowReconnectPrompt(true);
-        }
-        setSaveStatus("error");
-        setSaveMessage(errorMessage);
-        return;
-      }
-
-      const result = data as SavePlaylistResponse;
-      if (process.env.NODE_ENV !== "production") {
-        console.log("[generate] save response visibility", {
-          playlistId: result.playlistId,
-          isPublic: result.isPublic,
-        });
-      }
-      setSavedPlaylist(result);
-      setSaveStatus("success");
-      setSaveMessage(
-        result.visibility.final !== null
-          ? "Playlist saved successfully."
-          : "Playlist saved and tracks added. Visibility update did not apply.",
-      );
-      setIsSaveModalOpen(false);
-    } catch {
-      setSaveStatus("error");
-      setSaveMessage("Unexpected error while saving playlist.");
-    } finally {
-      saveInFlightRef.current = false;
-    }
+    const result = await save({ name: playlistName.trim(), description: playlistDescription.trim(), isPublic: playlistVisibility === "public" });
+    if (result) setIsSaveModalOpen(false);
   };
 
   return (
@@ -262,11 +114,14 @@ export default function Home() {
         </div>
         <p className="rounded-full border border-white/10 bg-[var(--surface-elevated)] px-4 py-2 text-center text-sm text-[var(--text-secondary)]">
           Status:{" "}
-          {isConnected === null ? "Checking..." : isConnected ? "Connected" : "Not connected"}
+          {checking ? "Checking..." : connectionError ? "Connection check failed" : isConnected ? "Connected" : "Not connected"}
         </p>
+        {authMessage ? <p role="status" className="text-sm text-amber-200">{authMessage}</p> : null}
+        {connectionError ? <div role="alert" className="text-sm text-amber-200"><p>{connectionError}</p><button className="mt-2 underline" type="button" disabled={checking} onClick={() => void check()}>Retry connection</button></div> : null}
+        {isConnected ? <button type="button" disabled={checking || isSaving} onClick={() => void disconnect()} className="text-sm text-[var(--text-secondary)] underline">Disconnect Spotify</button> : null}
         <a
           className="mx-auto inline-flex rounded-full bg-[var(--brand-action)] px-6 py-3 text-sm font-semibold text-[var(--brand-bg)] transition-colors hover:bg-[var(--brand-action-hover)]"
-          href="/api/auth/login"
+          href={loginUrl}
         >
           Connect Spotify
         </a>
@@ -274,10 +129,10 @@ export default function Home() {
           <div className="w-full rounded-2xl border border-[var(--brand-info)]/30 bg-[var(--brand-info)]/10 p-4 text-sm text-[#bfdbfe]">
             <p className="font-medium">Spotify needs playlist permissions.</p>
             <p className="mt-1 text-[#dbeafe]/85">
-              Reconnect to grant playlist-modify-private and playlist-modify-public.
+              Reconnect to grant permission to create playlists and verify saved tracks.
             </p>
             <a
-              href="/api/auth/reconnect"
+              href={reconnectUrl}
               className="mt-2 inline-flex rounded-full bg-[var(--brand-info)] px-4 py-2 text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--brand-info-hover)]"
             >
               Reconnect Spotify
@@ -344,23 +199,23 @@ export default function Home() {
             className="rounded-full bg-[var(--brand-action)] px-6 py-3 text-sm font-semibold text-[var(--brand-bg)] transition-colors hover:bg-[var(--brand-action-hover)] disabled:cursor-not-allowed disabled:bg-[#2a2a31] disabled:text-[var(--text-secondary)]"
             type="button"
             onClick={handleGeneratePlaylist}
-            disabled={isGenerating || isConnected !== true}
+            disabled={isGenerating || isSaving || isConnected !== true}
           >
-            {isGenerating ? "Generating..." : "Generate Playlist"}
+            {isGenerating ? "Generating..." : status === "error" ? "Try generating again" : "Generate Playlist"}
           </button>
         </div>
-        {message ? <p className="text-sm text-[var(--text-secondary)]">{message}</p> : null}
-        {status === "success" && tracks.length > 0 ? (
+        {message ? <p role="status" className="text-sm text-[var(--text-secondary)]">{message}</p> : null}
+        {tracks.length > 0 ? (
           <div className="w-full rounded-2xl border border-[var(--brand-focus)]/30 bg-[var(--brand-focus)]/10 p-4 text-sm text-[#d1fae5]">
             <p className="font-medium">Tracks generated successfully.</p>
             <p>{tracks.length} tracks were found from Spotify.</p>
             <button
               type="button"
               onClick={handleOpenSaveModal}
-              disabled={saveStatus === "saving"}
+              disabled={isSaving || isGenerating || !canSave}
               className="mt-3 rounded-full bg-[var(--brand-action)] px-4 py-2 text-xs font-semibold text-[var(--brand-bg)] hover:bg-[var(--brand-action-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-focus)]"
             >
-              Save to Spotify
+              {savedPlaylist ? "Saved to Spotify" : draft?.attempt?.status === "uncertain" ? "Check Spotify library" : draft?.attempt?.recovery ? "Finish saving to Spotify" : "Save to Spotify"}
             </button>
           </div>
         ) : null}
@@ -391,9 +246,9 @@ export default function Home() {
         {saveStatus === "error" && saveMessage ? (
           <div className="w-full rounded-2xl border border-red-300/30 bg-red-500/10 p-3 text-sm text-red-200">
             <p>{saveMessage}</p>
-            {showReconnectPrompt ? (
+            {!hasPlaylistScopes ? (
               <a
-                href="/api/auth/reconnect"
+                href={reconnectUrl}
                 className="mt-2 inline-flex rounded-full bg-red-400 px-4 py-2 text-xs font-semibold text-[var(--brand-bg)] hover:bg-red-300"
               >
                 Reconnect Spotify
@@ -401,6 +256,8 @@ export default function Home() {
             ) : null}
           </div>
         ) : null}
+        {draft?.attempt?.status === "uncertain" ? <a className="text-sm text-emerald-300 underline" href="https://open.spotify.com/collection/playlists" target="_blank" rel="noopener noreferrer">Check your Spotify library</a> : null}
+        {draft?.attempt?.recovery ? <a className="text-sm text-emerald-300 underline" href={draft.attempt.recovery.playlistUrl} target="_blank" rel="noopener noreferrer">Open the existing playlist</a> : null}
         {tracks.length > 0 ? (
           <ul className="w-full space-y-2 text-left">
             {tracks.map((track) => (
@@ -439,7 +296,7 @@ export default function Home() {
           <div className="w-full max-w-lg space-y-4 rounded-3xl border border-white/10 bg-[var(--card-bg)] p-5 shadow-2xl sm:p-6">
             <div className="space-y-1">
               <h2 id="save-modal-title" className="text-lg font-semibold text-[var(--text-primary)]">
-                Save to Spotify
+                {savedPlaylist ? "Saved to Spotify" : draft?.attempt?.status === "uncertain" ? "Check Spotify library" : draft?.attempt?.recovery ? "Finish saving to Spotify" : "Save to Spotify"}
               </h2>
               <p id="save-modal-description" className="text-sm text-[var(--text-secondary)]">
                 Review playlist details and create a playlist in your account.
@@ -452,6 +309,8 @@ export default function Home() {
               </label>
               <input
                 id="playlist-name"
+                disabled={Boolean(draft?.attempt && draft.attempt.status !== "failed")}
+                maxLength={100}
                 value={playlistName}
                 onChange={(event) => setPlaylistName(event.target.value)}
                 className="w-full rounded-xl border border-white/10 bg-[var(--surface-elevated)] px-3 py-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--brand-focus)]"
@@ -464,6 +323,8 @@ export default function Home() {
               </label>
               <textarea
                 id="playlist-description"
+                disabled={Boolean(draft?.attempt && draft.attempt.status !== "failed")}
+                maxLength={300}
                 value={playlistDescription}
                 onChange={(event) => setPlaylistDescription(event.target.value)}
                 rows={3}
@@ -471,7 +332,7 @@ export default function Home() {
               />
             </div>
 
-            <fieldset className="space-y-2">
+            <fieldset disabled={Boolean(draft?.attempt && draft.attempt.status !== "failed")} className="space-y-2">
               <legend className="text-sm font-medium text-[var(--text-primary)]">
                 Playlist visibility
               </legend>
@@ -524,7 +385,7 @@ export default function Home() {
               <button
                 type="button"
                 onClick={() => setIsSaveModalOpen(false)}
-                disabled={saveStatus === "saving"}
+                disabled={isSaving}
                 className="rounded-full border border-white/10 px-4 py-2 text-sm text-[var(--text-secondary)] hover:bg-[var(--surface-elevated-hover)]"
               >
                 Cancel
@@ -532,7 +393,7 @@ export default function Home() {
               <button
                 type="button"
                 onClick={() => void handleSavePlaylist()}
-                disabled={saveStatus === "saving"}
+                disabled={isSaving || isGenerating || !canSave}
                 className="rounded-full bg-[var(--brand-action)] px-4 py-2 text-sm font-semibold text-[var(--brand-bg)] hover:bg-[var(--brand-action-hover)] disabled:cursor-not-allowed disabled:bg-[#2a2a31] disabled:text-[var(--text-secondary)]"
               >
                 {saveStatus === "saving" ? "Saving..." : "Save Playlist"}

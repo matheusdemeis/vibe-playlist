@@ -3,6 +3,8 @@
 import type { PlaylistGenerationResponse } from "@/lib/playlist/generate";
 
 type TrackListProps = {
+  disabled?: boolean;
+  canRemove?: boolean;
   tracks: PlaylistGenerationResponse["tracks"];
   lockedTrackIds: string[];
   onToggleLock: (trackId: string) => void;
@@ -10,7 +12,7 @@ type TrackListProps = {
 };
 
 // Presentational only: keep Spotify API/network calls in server routes.
-export function TrackList({ tracks, lockedTrackIds, onToggleLock, onRemoveTrack }: TrackListProps) {
+export function TrackList({ disabled = false, canRemove = true, tracks, lockedTrackIds, onToggleLock, onRemoveTrack }: TrackListProps) {
   return (
     <ul className="space-y-2" aria-live="polite">
       {tracks.map((track) => {
@@ -49,6 +51,7 @@ export function TrackList({ tracks, lockedTrackIds, onToggleLock, onRemoveTrack 
             </div>
             <button
               type="button"
+              disabled={disabled}
               onClick={() => onToggleLock(track.id)}
               aria-pressed={isLocked}
               className={`rounded-full border px-3 py-1.5 text-xs transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 ${
@@ -61,6 +64,7 @@ export function TrackList({ tracks, lockedTrackIds, onToggleLock, onRemoveTrack 
             </button>
             <button
               type="button"
+              disabled={disabled || !canRemove}
               onClick={() => onRemoveTrack(track.id)}
               className="rounded-full border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 transition-colors hover:bg-zinc-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
             >

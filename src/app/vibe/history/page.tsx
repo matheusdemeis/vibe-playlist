@@ -29,7 +29,7 @@ export default function VibeHistoryPage() {
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="text-sm font-medium text-zinc-900">
-                    {entry.settings.vibes[0] ?? "Custom"} · {entry.settings.energy} energy
+                    {entry.settings.vibes[0] ?? "Custom"} · {entry.settings.trackCount} tracks
                   </p>
                   <p className="text-xs text-zinc-600">
                     {new Date(entry.createdAt).toLocaleString()}

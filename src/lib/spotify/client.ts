@@ -1,9 +1,7 @@
 import { assertServerOnly } from "../server/assert-server-only";
 
 const SPOTIFY_API_BASE_URL = "https://api.spotify.com/v1";
-
 type QueryParams = Record<string, string | number | boolean | undefined>;
-
 type SpotifyJsonOptions = {
   method?: string;
   path: string;
@@ -12,6 +10,8 @@ type SpotifyJsonOptions = {
   query?: QueryParams;
   headers?: HeadersInit;
   fetcher?: typeof fetch;
+  signal?: AbortSignal;
+  timeoutMs?: number;
 };
 
 export class SpotifyClientError extends Error {
@@ -39,129 +39,56 @@ export class SpotifyClientError extends Error {
   }
 }
 
+// Never retry writes here: Spotify may have committed them before a connection fails.
 export async function spotifyJson<T>(options: SpotifyJsonOptions): Promise<T> {
   assertServerOnly("spotifyJson");
-  const method = options.method ?? "GET";
+  const method = (options.method ?? "GET").toUpperCase();
   const path = options.path.startsWith("/") ? options.path : `/${options.path}`;
-  const url = buildSpotifyUrl(path, options.query);
-  const urlObject = new URL(url);
-  traceSpotifyHttp("request", {
-    method,
-    endpoint: path,
-    url,
-    query: {
-      q: urlObject.searchParams.get("q"),
-      type: urlObject.searchParams.get("type"),
-      limit: urlObject.searchParams.get("limit"),
-      market: urlObject.searchParams.get("market"),
-    },
-  });
-  const headers = new Headers(options.headers ?? {});
+  if (path.startsWith("//") || path.includes("..")) throw new Error("Invalid Spotify path.");
+  const url = new URL(`${SPOTIFY_API_BASE_URL}${path}`);
+  for (const [key, value] of Object.entries(options.query ?? {})) {
+    if (value !== undefined) url.searchParams.set(key, String(value));
+  }
+  const headers = new Headers(options.headers);
   headers.set("Authorization", `Bearer ${options.accessToken}`);
   headers.set("Accept", "application/json");
-
-  let body: string | undefined;
-  if (options.json !== undefined) {
-    headers.set("Content-Type", "application/json");
-    body = JSON.stringify(options.json);
-  }
-
-  const response = await (options.fetcher ?? fetch)(url, {
-    method,
-    headers,
-    body,
-  });
-
-  const responseBodyText = await response.text();
-  if (!response.ok) {
-    traceSpotifyHttp("error", {
-      method,
-      endpoint: path,
-      status: response.status,
-      tokenTail: options.accessToken.slice(-6),
-      bodyExcerpt: excerpt(responseBodyText),
-      responseHeaders: {
-        wwwAuthenticate: response.headers.get("www-authenticate"),
-        spotifyRequestId:
-          response.headers.get("spotify-request-id") ??
-          response.headers.get("x-spotify-request-id") ??
-          response.headers.get("x-request-id"),
-      },
-      headers: redactHeaders(headers),
+  if (options.json !== undefined) headers.set("Content-Type", "application/json");
+  const timeout = AbortSignal.timeout(options.timeoutMs ?? 10_000);
+  const signal = options.signal ? AbortSignal.any([timeout, options.signal]) : timeout;
+  let response: Response;
+  let bodyText: string;
+  try {
+    response = await (options.fetcher ?? fetch)(url.toString(), {
+      method, headers, signal, cache: "no-store",
+      body: options.json === undefined ? undefined : JSON.stringify(options.json),
     });
+    bodyText = await response.text();
+  } catch {
     throw new SpotifyClientError({
-      message: `Spotify request failed (${response.status})`,
-      status: response.status,
-      path,
-      url,
-      bodyText: responseBodyText,
-      responseHeaders: response.headers,
+      message: timeout.aborted ? "Spotify request timed out." : "Could not reach Spotify.",
+      status: timeout.aborted ? 504 : 502,
+      path, url: url.toString(), bodyText: "", responseHeaders: new Headers(),
     });
   }
-
-  if (method !== "GET") {
-    traceSpotifyHttp("ok", {
-      method,
-      endpoint: path,
-      status: response.status,
-      tokenTail: options.accessToken.slice(-6),
+  if (!response.ok) {
+    // Only safe request metadata: no token fragments, user queries, or upstream bodies.
+    if (process.env.SPOTIFY_DEBUG === "1") {
+      console.error("[spotify] request failed", { method, status: response.status });
+    }
+    throw new SpotifyClientError({
+      message: `Spotify request failed (${response.status}).`, status: response.status,
+      path, url: url.toString(), bodyText, responseHeaders: response.headers,
     });
   }
-
-  if (!responseBodyText.trim()) {
-    return {} as T;
+  if (!bodyText.trim()) return {} as T;
+  try {
+    return JSON.parse(bodyText) as T;
+  } catch {
+    throw new SpotifyClientError({
+      message: "Spotify returned an invalid response.", status: 502,
+      path, url: url.toString(), bodyText: "", responseHeaders: response.headers,
+    });
   }
-
-  return JSON.parse(responseBodyText) as T;
 }
 
 export const spotifyRequest = spotifyJson;
-
-function buildSpotifyUrl(path: string, query?: QueryParams): string {
-  const baseUrl = `${SPOTIFY_API_BASE_URL}${path}`;
-  if (!query) {
-    return baseUrl;
-  }
-
-  const searchParams = new URLSearchParams();
-  for (const [key, value] of Object.entries(query)) {
-    if (value === undefined) {
-      continue;
-    }
-    searchParams.set(key, String(value));
-  }
-
-  const queryString = searchParams.toString();
-  if (!queryString) {
-    return baseUrl;
-  }
-
-  return `${baseUrl}?${queryString}`;
-}
-
-function redactHeaders(headers: Headers): Record<string, string> {
-  const result: Record<string, string> = {};
-  headers.forEach((value, key) => {
-    if (key.toLowerCase() === "authorization") {
-      result[key] = value.startsWith("Bearer ") ? "Bearer [REDACTED]" : "[REDACTED]";
-      return;
-    }
-    result[key] = value;
-  });
-  return result;
-}
-
-function traceSpotifyHttp(event: string, payload: Record<string, unknown>): void {
-  if (event === "error") {
-    console.error(`[spotify-http] ${event}`, payload);
-    return;
-  }
-  if (process.env.SPOTIFY_DEBUG !== "1") {
-    return;
-  }
-  console.log(`[TRACE][spotify-http] ${event}`, payload);
-}
-
-function excerpt(value: string): string {
-  return value.length > 220 ? `${value.slice(0, 217)}...` : value;
-}

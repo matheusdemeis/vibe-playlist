@@ -1,212 +1,120 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import {
-  DEFAULT_VIBE_INPUT,
-  TEMPO_OPTIONS,
-  buildVibeGeneratorRequest,
-  type TempoOption,
-  type VibeBuilderInput,
-} from "@/lib/vibe-builder";
+import { buildVibeGeneratorRequest, readVibeBuilderQuery } from "@/lib/vibe-builder";
 import type { PlaylistGenerationResponse } from "@/lib/playlist/generate";
 import { addHistoryItem, attachPlaylistToHistory } from "@/lib/storage/vibe-data";
+import { apiErrorMessage, retryDelayMs } from "@/lib/storage/playlist-draft";
+import { usePlaylistDraft } from "@/components/vibe/usePlaylistDraft";
 import { ResultsActionBar } from "@/components/vibe/ResultsActionBar";
 import { TrackList } from "@/components/vibe/TrackList";
 
-type GenerateVibeApiError = {
-  error: string;
-  code: string;
-};
-
-type SavePlaylistApiError = {
-  error: string;
-  code: string;
-};
-
-type SavePlaylistApiSuccess = {
-  playlistName: string;
-  playlistId: string;
-  playlistUrl: string;
-  isPublic: boolean | null;
-  snapshotId: string | null;
-  tracksAddedCount: number;
-  tracksAdded: boolean;
-  warning?: string;
-  visibility: {
-    requested: boolean;
-    final: boolean | null;
-  };
-};
-
 type PlaylistVisibility = "private" | "public";
-
-function readRequestInput(params: URLSearchParams): VibeBuilderInput {
-  const vibes = params.get("vibes")?.split(",").filter(Boolean) ?? [];
-  const genres = params.get("genres")?.split(",").filter(Boolean) ?? [];
-  const energy = Number(params.get("energy"));
-  const valence = Number(params.get("valence"));
-  const tempo = params.get("tempo");
-  const trackCount = Number(params.get("trackCount"));
-  const explicit = params.get("explicit");
-
-  return {
-    vibes,
-    genres,
-    energy: Number.isFinite(energy) ? energy : DEFAULT_VIBE_INPUT.energy,
-    valence: Number.isFinite(valence) ? valence : DEFAULT_VIBE_INPUT.valence,
-    tempo:
-      TEMPO_OPTIONS.includes(tempo as TempoOption)
-        ? (tempo as TempoOption)
-        : DEFAULT_VIBE_INPUT.tempo,
-    trackCount: Number.isFinite(trackCount) ? trackCount : DEFAULT_VIBE_INPUT.trackCount,
-    explicit: explicit === null ? DEFAULT_VIBE_INPUT.explicit : explicit === "true",
-  };
-}
 
 export default function VibeResultsClient() {
   const searchParams = useSearchParams();
-  const [tracks, setTracks] = useState<PlaylistGenerationResponse["tracks"]>([]);
+  const queryString = searchParams.toString();
+  const cleanQuery = useMemo(() => {
+    const params = new URLSearchParams(queryString);
+    params.delete("auth_error");
+    return params.toString();
+  }, [queryString]);
+  const { draft, tracks, hydrated, replaceTracks, editTracks, save, isSaving: isSavingPlaylist, saveError, saveResult, canSave } = usePlaylistDraft<PlaylistGenerationResponse["tracks"][number]>(`vibeplay_advanced_draft_v1:${cleanQuery}`);
   const [lockedTrackIds, setLockedTrackIds] = useState<string[]>([]);
-  const [lockedTrackCache, setLockedTrackCache] = useState<
-    Record<string, PlaylistGenerationResponse["tracks"][number]>
-  >({});
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
   const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
   const [playlistName, setPlaylistName] = useState("");
   const [playlistDescription, setPlaylistDescription] = useState("");
   const [playlistVisibility, setPlaylistVisibility] = useState<PlaylistVisibility>("private");
-  const [isSavingPlaylist, setIsSavingPlaylist] = useState(false);
-  const [isRetryingAddTracks, setIsRetryingAddTracks] = useState(false);
-  const [saveErrorMessage, setSaveErrorMessage] = useState<string | null>(null);
-  const [saveResult, setSaveResult] = useState<SavePlaylistApiSuccess | null>(null);
-  const [savedPlaylistName, setSavedPlaylistName] = useState<string>("");
   const [latestHistoryId, setLatestHistoryId] = useState<string | null>(null);
+  const retryAt = useRef(0);
+  const generation = useRef<AbortController | null>(null);
+  const latest = useRef({ tracks, lockedTrackIds });
+  const initializedQuery = useRef<string | null>(null);
+  const savedPlaylistName = saveResult?.playlistName ?? "";
+  const saveErrorMessage = saveError ?? draft?.attempt?.message ?? null;
+  const returnTo = `/vibe/results?${cleanQuery}`;
 
-  const queryString = searchParams.toString();
+  useEffect(() => { latest.current = { tracks, lockedTrackIds }; }, [tracks, lockedTrackIds]);
+
   const requestParse = useMemo(() => {
-    const input = readRequestInput(searchParams);
-
-    try {
-      const request = buildVibeGeneratorRequest(input);
-      return { input, request, error: null as string | null };
-    } catch (error) {
-      return {
-        input,
-        request: null,
-        error: error instanceof Error ? error.message : "Request validation failed.",
-      };
-    }
-  }, [searchParams]);
-
-  const defaultPlaylistName = useMemo(() => {
-    if (!requestParse.request) {
-      return "";
-    }
-
-    return buildDefaultPlaylistName(requestParse.request.vibes, requestParse.request.targetEnergy);
-  }, [requestParse.request]);
-
-  const defaultPlaylistDescription = useMemo(() => {
-    if (!requestParse.request) {
-      return "";
-    }
-
-    const vibeText =
-      requestParse.request.vibes.length > 0
-        ? requestParse.request.vibes.join(", ")
-        : "custom vibe settings";
-    return `Generated with Vibe Builder from ${vibeText}.`;
-  }, [requestParse.request]);
+    const input = readVibeBuilderQuery(new URLSearchParams(cleanQuery));
+    try { return { input, request: buildVibeGeneratorRequest(input), error: null as string | null }; }
+    catch (error) { return { input, request: null, error: error instanceof Error ? error.message : "Request validation failed." }; }
+  }, [cleanQuery]);
+  const defaultPlaylistName = `${requestParse.input.vibes[0] ?? "Custom"} • VibePlay`;
+  const defaultPlaylistDescription = `Generated with VibePlay from ${requestParse.input.vibes.join(", ") || requestParse.input.genres.join(", ")}.`;
 
   const fetchResults = useCallback(async () => {
-    if (!requestParse.request) {
-      return;
-    }
-
+    if (!requestParse.request || generation.current || isSavingPlaylist) return;
+    if (Date.now() < retryAt.current) { setErrorMessage(`Spotify asked us to wait. Try again in ${Math.ceil((retryAt.current - Date.now()) / 1000)} seconds.`); return; }
+    const controller = new AbortController();
+    generation.current = controller;
+    const previous = latest.current;
     setIsLoading(true);
     setErrorMessage(null);
-
     try {
       const response = await fetch("/api/vibe/generate", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          seedGenres: requestParse.request.seedGenres,
-          targetEnergy: requestParse.request.targetEnergy,
-          targetValence: requestParse.request.targetValence,
-          tempo: requestParse.request.tempo,
-          trackCount: requestParse.request.trackCount,
-          referenceTrackIds: lockedTrackIds,
-        }),
+        method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
+        body: JSON.stringify({ ...requestParse.request, referenceTrackIds: previous.lockedTrackIds }),
       });
-
+      const data = await response.json() as PlaylistGenerationResponse & { warning?: string };
+      if (controller.signal.aborted) return;
       if (!response.ok) {
-        const data = (await response.json()) as GenerateVibeApiError;
-        setErrorMessage(data.error ?? "Could not generate tracks right now.");
+        retryAt.current = Date.now() + retryDelayMs(data, response.headers);
+        setErrorMessage(apiErrorMessage(data, "Could not generate tracks right now."));
         return;
       }
-
-      const data = (await response.json()) as PlaylistGenerationResponse;
-      setTracks((currentTracks) => {
-        const mergedTracks = mergeLockedTracks(
-          data.tracks,
-          lockedTrackIds,
-          lockedTrackCache,
-          requestParse.request.trackCount,
-          currentTracks,
-        );
-
-        const historyItem = addHistoryItem({
-          settings: requestParse.input,
-          topTracks: mergedTracks.slice(0, 5).map((track) => ({
-            id: track.id,
-            name: track.name,
-            artists: track.artists,
-            image: track.image,
-            uri: track.uri,
-          })),
-          playlist: null,
-        });
+      const merged = mergeLockedTracks(data.tracks, previous.lockedTrackIds, {}, requestParse.request.trackCount, previous.tracks);
+      if (!merged.length) {
+        setErrorMessage("No tracks found. Try another mood or genre; your previous mix is still available.");
+        return;
+      }
+      replaceTracks(merged);
+      setWarning(data.warning ?? null);
+      setIsSaveModalOpen(false);
+      try {
+        const historyItem = addHistoryItem({ settings: requestParse.input, topTracks: merged.slice(0, 5).map((track) => ({ id: track.id, name: track.name, artists: track.artists, image: track.image, uri: track.uri })), playlist: null });
         setLatestHistoryId(historyItem.id);
-
-        return mergedTracks;
-      });
+      } catch {
+        setLatestHistoryId(null);
+        setWarning([data.warning, "Your mix is ready, but browser history could not be saved."].filter(Boolean).join(" "));
+      }
     } catch {
-      setTracks([]);
-      setErrorMessage("Could not generate tracks right now.");
+      if (!controller.signal.aborted) setErrorMessage("Could not reach Spotify. Your previous mix is still available; please retry.");
     } finally {
-      setIsLoading(false);
+      if (generation.current === controller) {
+        generation.current = null;
+        setIsLoading(false);
+      }
     }
-  }, [lockedTrackCache, lockedTrackIds, requestParse.input, requestParse.request]);
+  }, [isSavingPlaylist, replaceTracks, requestParse]);
 
   useEffect(() => {
-    if (!requestParse.request) {
-      setTracks([]);
-      return;
-    }
+    if (!hydrated || initializedQuery.current === cleanQuery) return;
+    initializedQuery.current = cleanQuery;
+    if (!draft) void fetchResults();
+  }, [cleanQuery, draft, fetchResults, hydrated]);
 
-    void fetchResults();
-  }, [fetchResults, requestParse.request]);
+  useEffect(() => () => {
+    generation.current?.abort();
+    generation.current = null;
+    initializedQuery.current = null;
+  }, [cleanQuery]);
 
-  useEffect(() => {
-    if (!requestParse.request) {
-      setPlaylistName("");
-      setPlaylistDescription("");
-      return;
-    }
-
-    setPlaylistName(defaultPlaylistName);
-    setPlaylistDescription(defaultPlaylistDescription);
-    setPlaylistVisibility("private");
-  }, [defaultPlaylistDescription, defaultPlaylistName, requestParse.request]);
+  const handleOpenSaveModal = () => {
+    setPlaylistName(draft?.attempt?.payload.name ?? defaultPlaylistName);
+    setPlaylistDescription(draft?.attempt?.payload.description ?? defaultPlaylistDescription);
+    setPlaylistVisibility(draft?.attempt?.payload.isPublic ? "public" : "private");
+    setIsSaveModalOpen(true);
+  };
 
   const handleShuffle = () => {
-    setTracks((previous) => {
+    editTracks((previous) => {
       const next = [...previous];
       for (let index = next.length - 1; index > 0; index -= 1) {
         const swapIndex = Math.floor(Math.random() * (index + 1));
@@ -215,169 +123,25 @@ export default function VibeResultsClient() {
       return next;
     });
   };
-
   const handleRemoveTrack = (trackId: string) => {
-    setTracks((previous) => previous.filter((track) => track.id !== trackId));
+    if (draft?.attempt || isLoading || isSavingPlaylist) return;
+    editTracks((previous) => previous.filter((track) => track.id !== trackId));
     setLockedTrackIds((previous) => previous.filter((id) => id !== trackId));
   };
-
   const handleToggleLock = (trackId: string) => {
-    setLockedTrackIds((previous) => {
-      if (previous.includes(trackId)) {
-        return previous.filter((id) => id !== trackId);
-      }
-      return [...previous, trackId];
-    });
+    if (isLoading || isSavingPlaylist) return;
+    setLockedTrackIds((previous) => previous.includes(trackId) ? previous.filter((id) => id !== trackId) : [...previous, trackId]);
   };
-
   const handleSaveToSpotify = async () => {
-    if (tracks.length === 0) {
-      setSaveErrorMessage("No tracks available to save.");
-      return;
-    }
-
-    const trimmedName = playlistName.trim();
-    if (!trimmedName) {
-      setSaveErrorMessage("Playlist name is required.");
-      return;
-    }
-
-    setIsSavingPlaylist(true);
-    setSaveErrorMessage(null);
-    setSaveResult(null);
-    setSavedPlaylistName("");
-    const savePayload = {
-      name: trimmedName,
-      description: playlistDescription.trim(),
-      isPublic: playlistVisibility === "public",
-      trackUris: tracks.map((track) => track.uri),
-    };
-
-    try {
-      if (process.env.NODE_ENV !== "production") {
-        console.log("[vibe-results] save payload visibility", {
-          isPublic: savePayload.isPublic,
-          isPublicType: typeof savePayload.isPublic,
-        });
-      }
-      const response = await fetch("/api/vibe/save", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(savePayload),
-      });
-
-      if (!response.ok) {
-        const data = (await response.json()) as SavePlaylistApiError;
-        setSaveErrorMessage(data.error ?? "Could not save playlist.");
-        return;
-      }
-
-      const data = (await response.json()) as SavePlaylistApiSuccess;
-      if (process.env.NODE_ENV !== "production") {
-        console.log("[vibe-results] save response visibility", {
-          playlistId: data.playlistId,
-          isPublic: data.isPublic,
-        });
-      }
-      setSaveResult(data);
-      setSavedPlaylistName(data.playlistName || trimmedName);
-      if (data.tracksAdded === false) {
-        setSaveErrorMessage("Playlist created, but tracks failed to add.");
-      }
-      if (latestHistoryId) {
-        attachPlaylistToHistory(latestHistoryId, {
-          id: data.playlistId,
-          url: data.playlistUrl,
-        });
-      }
-      setIsSaveModalOpen(false);
-    } catch {
-      setSaveErrorMessage("Could not save playlist right now.");
-    } finally {
-      setIsSavingPlaylist(false);
-    }
-  };
-
-  const handleCreateAnotherPlaylist = () => {
-    setTracks([]);
-    setLockedTrackIds([]);
-    setLockedTrackCache({});
-    setSaveResult(null);
-    setSavedPlaylistName("");
-    setSaveErrorMessage(null);
-    setLatestHistoryId(null);
-    setErrorMessage(null);
+    const result = await save({ name: playlistName.trim(), description: playlistDescription.trim(), isPublic: playlistVisibility === "public" });
+    if (!result) return;
     setIsSaveModalOpen(false);
-    setPlaylistVisibility("private");
-    setPlaylistName(defaultPlaylistName);
-    setPlaylistDescription(defaultPlaylistDescription);
-    if (requestParse.request) {
-      void fetchResults();
+    if (latestHistoryId) {
+      try { attachPlaylistToHistory(latestHistoryId, { id: result.playlistId, url: result.playlistUrl }); }
+      catch { setWarning("Playlist saved to Spotify. Browser history could not be updated."); }
     }
   };
-
-  const handleRetryAddTracks = async () => {
-    if (!saveResult) {
-      return;
-    }
-
-    setIsRetryingAddTracks(true);
-    setSaveErrorMessage(null);
-    try {
-      const response = await fetch(`/api/playlists/${saveResult.playlistId}/add-tracks`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          trackUris: tracks.map((track) => track.uri),
-        }),
-      });
-
-      const data = (await response.json()) as
-        | { tracksAddedCount: number; error?: string }
-        | SavePlaylistApiError;
-      if (!response.ok) {
-        setSaveErrorMessage(
-          ("error" in data ? data.error : undefined) ?? "Could not add tracks right now.",
-        );
-        return;
-      }
-
-      setSaveResult((previous) =>
-        previous
-          ? {
-              ...previous,
-              tracksAdded: true,
-              tracksAddedCount:
-                "tracksAddedCount" in data ? data.tracksAddedCount : previous.tracksAddedCount,
-            }
-          : previous,
-      );
-    } catch {
-      setSaveErrorMessage("Could not add tracks right now.");
-    } finally {
-      setIsRetryingAddTracks(false);
-    }
-  };
-
-  useEffect(() => {
-    if (tracks.length === 0) {
-      return;
-    }
-
-    setLockedTrackCache((previous) => {
-      const next = { ...previous };
-      for (const track of tracks) {
-        if (lockedTrackIds.includes(track.id)) {
-          next[track.id] = track;
-        }
-      }
-      return next;
-    });
-  }, [lockedTrackIds, tracks]);
+  const handleCreateAnotherPlaylist = () => { void fetchResults(); };
 
   return (
     <main className="relative overflow-hidden rounded-3xl border border-zinc-800 bg-zinc-950/90 p-5 shadow-2xl shadow-black/40 sm:p-8">
@@ -398,6 +162,12 @@ export default function VibeResultsClient() {
         </section>
       ) : null}
 
+      {searchParams.get("auth_error") ? <p role="alert" className="mb-4 text-sm text-amber-200">Spotify connection was not completed. Your settings and mix are preserved. You can reconnect below.</p> : null}
+      {warning ? <p role="status" className="mb-4 text-sm text-amber-200">{warning}</p> : null}
+      {saveErrorMessage && !isSaveModalOpen ? <p role="alert" className="mb-4 text-sm text-amber-200">{saveErrorMessage}</p> : null}
+      {draft?.attempt?.status === "uncertain" ? <a className="mb-4 inline-block text-sm text-emerald-300 underline" href="https://open.spotify.com/collection/playlists" target="_blank" rel="noopener noreferrer">Check your Spotify library</a> : null}
+      {draft?.attempt?.recovery ? <a className="mb-4 inline-block text-sm text-emerald-300 underline" href={draft.attempt.recovery.playlistUrl} target="_blank" rel="noopener noreferrer">Open the existing playlist</a> : null}
+
       {!requestParse.error && isLoading ? (
         <section aria-live="polite" aria-busy="true" className="space-y-3">
           <p className="text-sm text-zinc-400">Generating tracks...</p>
@@ -413,6 +183,7 @@ export default function VibeResultsClient() {
           className="space-y-3 rounded-xl border border-red-300/30 bg-red-500/10 p-4 text-sm text-red-200"
         >
           <p>{errorMessage}</p>
+          <a className="mr-3 underline" href={`/api/auth/reconnect?returnTo=${encodeURIComponent(returnTo)}`}>Reconnect Spotify</a>
           <button
             type="button"
             onClick={() => void fetchResults()}
@@ -430,7 +201,7 @@ export default function VibeResultsClient() {
         </section>
       ) : null}
 
-      {!requestParse.error && !isLoading && !errorMessage && tracks.length > 0 ? (
+      {!requestParse.error && tracks.length > 0 ? (
         <section className="space-y-4">
           {saveResult ? (
             <div className="space-y-3 rounded-xl border border-emerald-300/30 bg-emerald-500/10 p-4 text-sm text-emerald-100">
@@ -465,16 +236,7 @@ export default function VibeResultsClient() {
                 >
                   Create Another Playlist
                 </button>
-                {!saveResult.tracksAdded ? (
-                  <button
-                    type="button"
-                    onClick={() => void handleRetryAddTracks()}
-                    disabled={isRetryingAddTracks}
-                    className="inline-flex rounded-full bg-amber-400 px-4 py-2 text-xs font-semibold text-zinc-900 hover:bg-amber-300 disabled:opacity-60"
-                  >
-                    {isRetryingAddTracks ? "Retrying..." : "Retry add tracks"}
-                  </button>
-                ) : null}
+
               </div>
               {saveResult.warning ? <p className="text-amber-200">{saveResult.warning}</p> : null}
               {saveErrorMessage ? <p className="text-amber-200">{saveErrorMessage}</p> : null}
@@ -483,16 +245,20 @@ export default function VibeResultsClient() {
 
           <ResultsActionBar
             trackCount={tracks.length}
-            isBusy={isLoading || isSavingPlaylist || isRetryingAddTracks}
+            isBusy={isLoading || isSavingPlaylist}
+            canSave={canSave}
+            canEdit={!draft?.attempt}
+            saveLabel={draft?.attempt?.recovery ? "Finish saving" : "Save to Spotify"}
             onRegenerate={() => void fetchResults()}
             onShuffle={handleShuffle}
             onSave={() => {
-              setSaveErrorMessage(null);
-              setIsSaveModalOpen(true);
+              handleOpenSaveModal();
             }}
           />
 
           <TrackList
+            disabled={isLoading || isSavingPlaylist}
+            canRemove={!draft?.attempt}
             tracks={tracks}
             lockedTrackIds={lockedTrackIds}
             onToggleLock={handleToggleLock}
@@ -537,6 +303,8 @@ export default function VibeResultsClient() {
               </label>
               <input
                 id="playlist-name"
+                disabled={Boolean(draft?.attempt && draft.attempt.status !== "failed")}
+                maxLength={100}
                 value={playlistName}
                 onChange={(event) => setPlaylistName(event.target.value)}
                 className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-zinc-100"
@@ -549,6 +317,8 @@ export default function VibeResultsClient() {
               </label>
               <textarea
                 id="playlist-description"
+                disabled={Boolean(draft?.attempt && draft.attempt.status !== "failed")}
+                maxLength={300}
                 value={playlistDescription}
                 onChange={(event) => setPlaylistDescription(event.target.value)}
                 rows={3}
@@ -556,7 +326,7 @@ export default function VibeResultsClient() {
               />
             </div>
 
-            <fieldset className="space-y-2">
+            <fieldset disabled={Boolean(draft?.attempt && draft.attempt.status !== "failed")} className="space-y-2">
               <legend className="text-sm font-medium text-zinc-100">Playlist visibility</legend>
               <div className="inline-flex rounded-xl border border-zinc-800 bg-zinc-900 p-1">
                 <label className="cursor-pointer">
@@ -613,7 +383,7 @@ export default function VibeResultsClient() {
               <button
                 type="button"
                 onClick={() => void handleSaveToSpotify()}
-                disabled={isSavingPlaylist}
+                disabled={isSavingPlaylist || !canSave}
                 className="rounded-full bg-emerald-500 px-4 py-2 text-sm font-semibold text-zinc-950 hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
               >
                 {isSavingPlaylist ? "Saving..." : "Save Playlist"}
@@ -631,7 +401,7 @@ export default function VibeResultsClient() {
                 <p>{saveErrorMessage}</p>
                 {saveErrorMessage.toLowerCase().includes("reconnect") ? (
                   <a
-                    href="/api/auth/reconnect"
+                    href={`/api/auth/reconnect?returnTo=${encodeURIComponent(returnTo)}`}
                     className="mt-2 inline-block rounded-full bg-red-400 px-4 py-1.5 text-xs font-semibold text-zinc-900 hover:bg-red-300"
                   >
                     Reconnect Spotify
@@ -688,25 +458,4 @@ function mergeLockedTracks(
   }
 
   return merged.slice(0, trackCount);
-}
-
-function buildDefaultPlaylistName(vibes: string[], targetEnergy: number): string {
-  const primaryVibe = vibes[0] ?? "Vibe";
-  const energyLabel = getEnergyLabel(targetEnergy);
-  const dateLabel = new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-  }).format(new Date());
-
-  return `${primaryVibe} • ${energyLabel} • ${dateLabel}`;
-}
-
-function getEnergyLabel(targetEnergy: number): string {
-  if (targetEnergy >= 67) {
-    return "High Energy";
-  }
-  if (targetEnergy >= 34) {
-    return "Medium Energy";
-  }
-  return "Low Energy";
 }

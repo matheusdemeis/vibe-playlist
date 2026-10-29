@@ -1,31 +1,42 @@
-# Spotify Flow Map (Current `main` Behavior)
+# Spotify flow after Phase 2
 
-- OAuth start: [`src/app/page.tsx`]`Home` renders a **Connect Spotify** anchor to `/api/auth/login`.
-- OAuth authorize route: [`src/app/api/auth/login/route.ts`](src/app/api/auth/login/route.ts) `GET` builds Spotify `/authorize` URL with `response_type=code`, `redirect_uri`, and scopes.
-- OAuth scopes source: [`src/app/api/auth/login/route.ts`](src/app/api/auth/login/route.ts) `SPOTIFY_SCOPES` includes:
-- `playlist-modify-private`
-- `playlist-modify-public`
-- `user-read-private`
-- OAuth callback: [`src/app/api/auth/callback/route.ts`](src/app/api/auth/callback/route.ts) `GET` validates `state`, exchanges code at `https://accounts.spotify.com/api/token`.
-- Session/token persistence: callback stores httpOnly cookies `spotify_access_token` and `spotify_access_scope_raw`.
-- Reconnect flow: [`src/app/api/auth/reconnect/route.ts`](src/app/api/auth/reconnect/route.ts) clears token/scope cookies and redirects to login with `show_dialog=1`.
-- Server token retrieval: [`src/lib/auth/spotify-session.ts`](src/lib/auth/spotify-session.ts) `getSpotifySession()` reads cookies and parses granted scopes.
-- Connected check endpoint: [`src/app/api/me/route.ts`](src/app/api/me/route.ts) `GET` returns `connected` from access-token presence.
-- Scope status endpoint: [`src/app/api/spotify/status/route.ts`](src/app/api/spotify/status/route.ts) `GET` returns granted/missing scopes in development.
-- Spotify HTTP client: [`src/lib/spotify/client.ts`](src/lib/spotify/client.ts) `spotifyJson()` builds URL under `https://api.spotify.com/v1`, injects `Authorization: Bearer ...`, throws `SpotifyClientError` on non-2xx.
-- Generate (legacy home page): [`src/app/api/generate/route.ts`](src/app/api/generate/route.ts) `POST` calls `/search?q=...&type=track&limit=...&market=from_token`.
-- `market=from_token` usage: only in `api/generate` search route for market tied to user token context.
-- Generate (vibe flow): [`src/app/vibe/results/page.tsx`](src/app/vibe/results/page.tsx) `fetchResults()` posts to `/api/vibe/generate`.
-- Vibe generate API: [`src/app/api/vibe/generate/route.ts`](src/app/api/vibe/generate/route.ts) `POST` requires server session token then calls `generatePlaylistTracks(...)`.
-- Recommendation endpoints: [`src/lib/playlist/generate.ts`](src/lib/playlist/generate.ts)
-- `fetchRecommendations()` → `GET /v1/recommendations`
-- `fetchAudioFeatures()` → `GET /v1/audio-features?ids=...`
-- Save from home page: [`src/app/page.tsx`](src/app/page.tsx) `handleSavePlaylist()` posts to `/api/vibe/save`.
-- Save from vibe results: [`src/app/vibe/results/page.tsx`](src/app/vibe/results/page.tsx) `handleSaveToSpotify()` posts to `/api/vibe/save`; retry uses `/api/playlists/{playlistId}/add-tracks`.
-- Save API route: [`src/app/api/vibe/save/route.ts`](src/app/api/vibe/save/route.ts) `POST` enforces auth + scopes, does `/me` preflight, then `savePlaylistToSpotify(...)`.
-- Playlist creation endpoint: [`src/lib/playlist/save.ts`](src/lib/playlist/save.ts) `createPlaylist()` uses `POST /v1/me/playlists`.
-- Add tracks endpoint: [`src/lib/playlist/save.ts`](src/lib/playlist/save.ts) `addTracksInBatches()` uses `POST /v1/playlists/{id}/items` in chunks of 100.
-- Track detail endpoint (403 filtering path): [`src/lib/playlist/save.ts`](src/lib/playlist/save.ts) `lookupTrackExplicit()` uses `GET /v1/tracks/{id}`.
-- Retry add-tracks route: [`src/app/api/playlists/[playlistId]/add-tracks/route.ts`](src/app/api/playlists/[playlistId]/add-tracks/route.ts) validates URIs and calls `addTracksInBatches`.
-- Error handling (server): route handlers map Spotify and validation failures to structured JSON with status + `code`.
-- Error handling (UI): [`src/app/page.tsx`](src/app/page.tsx) and [`src/app/vibe/results/page.tsx`](src/app/vibe/results/page.tsx) show inline failure messages, reconnect prompt on missing scopes, and retry actions.
+## Authentication
+
+1. /api/auth/login and /api/auth/reconnect use src/lib/auth/oauth.ts to generate state and an S256 PKCE challenge. An encrypted HttpOnly cookie holds state, verifier, expiry, and an allowlisted return path. Reconnect requests consent without destroying a working session first.
+2. /api/auth/callback consumes and validates state, handles denied consent, and exchanges the code and verifier on the server. Errors redirect to the initiating screen with a safe error code.
+3. src/lib/auth/spotify-session.ts stores access token, refresh token, scopes, and expiry in an authenticated encrypted HttpOnly cookie. Purpose-specific keys derive from the existing server-only client secret. Cookies are Secure in production, SameSite=Lax, and have an absolute 30-day session lifetime.
+4. Access tokens refresh shortly before expiry. An omitted replacement refresh token/scope retains the old value. invalid_grant clears the session; transient failures preserve it. Refreshes are coalesced within one server process.
+5. /api/spotify/status validates the session against GET /me and returns connection/scopes/account metadata without tokens. /api/me shares this implementation. Revoked access clears the local session.
+6. Same-origin POST /api/auth/logout clears local authentication cookies. It does not revoke the Spotify application grant.
+
+Requested scopes: playlist-modify-private, playlist-modify-public, playlist-read-private, and user-read-private. Private playlist reading supports safe partial-save recovery.
+
+## Generation
+
+- /generate posts to /api/generate. /vibe/results posts to /api/vibe/generate. /api/spotify/search-tracks supports catalog lookup.
+- Both flows use src/lib/spotify/catalog.ts: Search pages of at most ten, bounded request budgets, offset pagination, URI/ID deduplication, and explicit/playability filtering.
+- Primary preferences use exact artist resolution when possible; inexact artist matches are not silently selected. Advanced references use individual track metadata and their artists.
+- Mood presets guide genre/metadata queries. These are catalog matches, not measured audio similarity. Recommendations and Audio Features endpoints are no longer called. Energy, valence, and tempo controls are disabled and explained.
+- Authentication, access, quota, rate-limit, and service failures retain useful HTTP statuses and Retry-After. Empty/short successful results are distinct from API failures.
+- usePlaylistDraft persists reviewable tracks and save state. Advanced results initialize once per settings query; lock/shuffle/edit events do not start generation. Explicit regeneration replaces the draft only after a successful nonempty response.
+
+## Saving and recovery
+
+1. Both UIs use src/components/vibe/usePlaylistDraft.ts. The hook persists a pending save before submitting, guards repeated clicks, and uses browser locks when available to coordinate tabs for that draft.
+2. POST /api/vibe/save requires same-origin requests, validates payloads, and checks visibility-specific write scopes plus private playlist reading.
+3. src/lib/playlist/save.ts obtains the current user from /me, creates with POST /me/playlists, and inserts with POST /playlists/{id}/items in batches of at most 100.
+4. A bounded process-local operation journal coalesces repeat submissions. This supplements browser state; it is not a distributed exactly-once guarantee.
+5. Once creation returns an ID, insertion failures include a signed recovery receipt bound to playlist, owner, immutable draft contents, and expiry. There are no automatic append retries or silent explicit-track removals.
+6. Explicit recovery checks ownership and reads /playlists/{id}/items. Existing contents must match the draft's prefix; only missing tracks are appended. Completed contents require no writes. External edits stop recovery rather than being overwritten.
+7. Ambiguous creation without an ID blocks automatic resubmission and asks users to inspect their library. Confirmed saves stay saved across reloads. Another playlist requires a new generated draft.
+
+The legacy /api/playlists/[playlistId]/add-tracks route requires a signed recovery receipt and the original full payload, delegating to the save handler. Current UI recovery uses /api/vibe/save directly.
+
+## Shared boundaries
+
+- src/lib/spotify/client.ts: server-only transport, bounded timeouts, no-store, safe diagnostics; no automatic write retry.
+- src/lib/spotify/error.ts: safe messages and Retry-After parsing, including quota-specific 429 responses.
+- src/lib/config/app-url.ts: explicit production origin, matching callback, HTTPS or local loopback, restricted return paths.
+- src/lib/storage/playlist-draft.ts and vibe-data.ts: runtime validation and storage-failure handling.
+
+See [the Phase 2 report](phase-2-reliability.md) for configuration, verification, manual Spotify tests, and remaining limitations.
