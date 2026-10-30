@@ -34,7 +34,7 @@ describe("catalog generation API", () => {
     vi.stubGlobal("fetch", vi.fn(async (raw: string) => {
       const url = new URL(raw);
       if (url.searchParams.get("type") === "artist") return json({ artists: { items: [{ id: "unrelated", name: "Unrelated" }] } });
-      expect(url.searchParams.get("q")).toBe("Song title");
+      expect(url.searchParams.get("q")).toBe('"Song title"');
       return json({ tracks: { items: [track(1)], next: null } });
     }));
     const result = await POST(request({ query: "Song title" }));

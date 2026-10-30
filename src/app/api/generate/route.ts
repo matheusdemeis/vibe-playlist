@@ -4,6 +4,7 @@ import { getSpotifyFailure } from "../../../lib/spotify/error";
 import {
   CatalogSearchError, isRecord, quoteSearchValue, resolveExactArtist, searchCatalogTracks,
 } from "../../../lib/spotify/catalog";
+import { selectCatalogTracks } from "../../../lib/playlist/catalog-selection";
 import { normalizeVibeKey, VIBE_CONFIG } from "../../../lib/vibes";
 
 export async function POST(request: NextRequest) {
@@ -41,14 +42,15 @@ export async function POST(request: NextRequest) {
     }
 
     const artist = query || artistId ? await resolveExactArtist(accessToken, query, artistId) : null;
-    const preference = artist ? `artist:${quoteSearchValue(artist.name)}` : query;
+    const preference = artist ? `artist:${quoteSearchValue(artist.name)}` : query ? quoteSearchValue(query) : "";
     const queries = vibe ? VIBE_CONFIG[vibe].seedGenres.map((genre) =>
       [preference, `genre:${quoteSearchValue(genre)}`].filter(Boolean).join(" "),
     ) : [preference];
-    const tracks = await searchCatalogTracks(accessToken, {
-      queries, targetCount: requestedCount, requiredArtistId: artist?.id,
+    const candidates = await searchCatalogTracks(accessToken, {
+      queries, targetCount: Math.min(100, requestedCount * 2), requiredArtistId: artist?.id,
       includeExplicit: body.includeExplicit !== false,
     });
+    const tracks = selectCatalogTracks(candidates, requestedCount);
     const warning = tracks.length === 0
       ? "No catalog matches were found for those preferences. Try a different mood or artist."
       : tracks.length < requestedCount

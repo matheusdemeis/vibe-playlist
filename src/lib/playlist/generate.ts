@@ -1,3 +1,4 @@
+import { selectCatalogTracks } from "./catalog-selection";
 import type { TempoOption } from "@/lib/vibe-builder";
 import { spotifyRequest } from "../spotify/client";
 import {
@@ -187,7 +188,10 @@ export async function generatePlaylistTracks(
     const key = mood.toLowerCase().replace(/\s+/g, "");
     return Object.prototype.hasOwnProperty.call(CATALOG_MOOD_GENRES, key) ? CATALOG_MOOD_GENRES[key] : [];
   });
-  const genres = uniqueNonEmpty([...moodGenres, ...params.seed_genres]).slice(0, 10);
+  // Give explicit genre choices and mood presets space within the query budget.
+  const genreChoices = uniqueNonEmpty(input.seedGenres);
+  const genres = uniqueNonEmpty(Array.from({ length: Math.max(genreChoices.length, moodGenres.length) }, (_, index) =>
+    [genreChoices[index], moodGenres[index]].filter((genre): genre is string => Boolean(genre))).flat()).slice(0, 10);
   const references: CatalogTrack[] = [];
   for (const id of params.seed_tracks ?? []) {
     const data = await spotifyRequest<unknown>({ path: "/tracks/" + encodeURIComponent(id), accessToken, fetcher });
@@ -195,23 +199,26 @@ export async function generatePlaylistTracks(
     if (!track) throw new CatalogSearchError("Spotify returned an unreadable reference track. Please try again.");
     references.push(track);
   }
-  const artists = uniqueNonEmpty(references.flatMap((track) => track.artists.map((artist) => artist.name))).slice(0, 5);
-  const queries = artists.length
-    ? artists.flatMap((artist) => genres.length
-      ? genres.map((genre) => "artist:" + quoteSearchValue(artist) + " genre:" + quoteSearchValue(genre))
-      : ["artist:" + quoteSearchValue(artist)])
-    : genres.map((genre) => "genre:" + quoteSearchValue(genre));
+  const artists = [...new Map(references.flatMap((track) => track.artists).map((artist) => [artist.id, artist])).values()].slice(0, 5);
+  // Rotate artists within each genre so a ten-query budget represents every
+  // reference artist, rather than exhausting it on the first artist's genres.
+  const queries = (artists.length
+    ? (genres.length ? genres : [null]).flatMap((genre) => artists.map((artist) =>
+      "artist:" + quoteSearchValue(artist.name) + (genre ? " genre:" + quoteSearchValue(genre) : "")))
+    : genres.map((genre) => "genre:" + quoteSearchValue(genre))).slice(0, 10);
+  const requiredArtistIdsByQuery = Object.fromEntries(queries.map((query) => [query,
+    artists.filter((artist) => query.startsWith("artist:" + quoteSearchValue(artist.name))).map((artist) => artist.id)]));
   if (queries.length === 0) {
     throw new PlaylistGenerationError("Select at least one mood, genre, or reference track.", 400, "missing_seeds");
   }
   const catalogTracks = await searchCatalogTracks(accessToken, {
-    queries, targetCount: params.limit, includeExplicit: input.includeExplicit, fetcher,
+    queries, requiredArtistIdsByQuery, targetCount: Math.min(200, params.limit * 2), includeExplicit: input.includeExplicit, fetcher,
   });
   const sortedTracks = input.preferPreviews
     ? [...catalogTracks].sort((left, right) => Number(Boolean(right.preview_url)) - Number(Boolean(left.preview_url)))
     : catalogTracks;
-  const tracks = limitTracksPerArtist(
-    sortedTracks, input.maxTracksPerArtist ?? DEFAULT_MAX_TRACKS_PER_ARTIST, params.limit,
+  const tracks = selectCatalogTracks(
+    sortedTracks, params.limit, input.maxTracksPerArtist ?? DEFAULT_MAX_TRACKS_PER_ARTIST,
   ).map(formatRankedTrack);
   const countWarning = tracks.length === 0
     ? "No catalog matches found. Try different moods, genres, or reference tracks. "
@@ -222,7 +229,7 @@ export async function generatePlaylistTracks(
     metadata: {
       strategy: "catalog_search",
       queries: queries.slice(0, 10),
-      usedSeeds: { seed_genres: genres, seed_tracks: params.seed_tracks ?? [] },
+      usedSeeds: { seed_genres: genres.filter((genre) => queries.some((query) => query.endsWith("genre:" + quoteSearchValue(genre)))), seed_tracks: params.seed_tracks ?? [] },
       params,
       generatedAt: new Date().toISOString(),
     },
