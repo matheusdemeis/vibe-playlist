@@ -48,7 +48,11 @@ export function ResultsActionBar({
         <button
           className="button button-primary button-small"
           type="button"
-          onClick={onSave}
+          onClick={(event) => {
+            // Let the dialog restore focus to its launcher in WebKit too.
+            event.currentTarget.focus();
+            onSave();
+          }}
           disabled={isBusy || !canSave || trackCount === 0}
         >
           <SpotifyIcon />

@@ -106,7 +106,7 @@ export default function VibeResultsClient() {
       const response = await fetch("/api/vibe/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        signal: controller.signal,
+        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(90_000)]),
         body: JSON.stringify({
           ...requestParse.request,
           referenceTrackIds: previous.lockedTrackIds,

@@ -151,7 +151,7 @@ function Generator() {
       const response = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        signal: controller.signal,
+        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(90_000)]),
         body: JSON.stringify({
           query: trimmedQuery,
           limit,
@@ -296,8 +296,8 @@ function Generator() {
                   aria-describedby="preference-hint"
                 />
                 <p id="preference-hint" className="field-hint">
-                  Add a favorite to guide the catalog search, or let your mood
-                  lead.
+                  Artist names limit results to that artist. Song text matches
+                  the catalog; it does not find similar-sounding music.
                 </p>
               </div>
               <div className="length-field">
@@ -440,7 +440,11 @@ function Generator() {
                 </button>
                 <button
                   className="button button-primary button-small"
-                  onClick={handleOpenSaveModal}
+                  onClick={(event) => {
+                    // WebKit does not focus buttons on pointer activation.
+                    event.currentTarget.focus();
+                    handleOpenSaveModal();
+                  }}
                   disabled={isSaving || isGenerating || !canSave}
                 >
                   <SpotifyIcon />
