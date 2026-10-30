@@ -1,626 +1,179 @@
-import { formatSpotifyApiErrorMessage } from "../spotify/error";
-import { SpotifyClientError, spotifyJson } from "../spotify/client";
+import { spotifyJson, SpotifyClientError } from "../spotify/client";
+import { getSpotifyFailure } from "../spotify/error";
+import { createSaveReceipt, fingerprintPlaylist, getSaveSigningKey, readSaveReceipt } from "./save-receipt";
+import { runSaveOperation, SaveOperationConflict } from "./save-operations";
+
 export const SPOTIFY_TRACKS_BATCH_SIZE = 100;
-const SPOTIFY_TRACK_DETAILS_CONCURRENCY = 8;
-
-type SpotifyCreatePlaylistResponse = {
-  id: string;
-  public?: boolean | null;
-  collaborative?: boolean;
-  owner?: {
-    id?: string;
-  };
-  external_urls: {
-    spotify: string;
-  };
-};
-
-type SpotifyMeResponse = {
-  id: string;
-  explicit_content?: {
-    filter_enabled?: boolean;
-  };
-};
-
-type SpotifyPlaylistMetaResponse = {
-  owner?: { id?: string };
-  collaborative?: boolean;
-  public?: boolean | null;
-};
-
-type SpotifyTrackDetailsResponse = {
-  id?: string;
-  explicit?: boolean;
-};
-
+export type PlaylistRecovery = { playlistId: string; playlistUrl: string; recoveryToken: string };
 type SavePlaylistInput = {
-  accessToken: string;
-  grantedScopes: string[];
-  name: string;
-  description: string;
-  isPublic: boolean;
-  trackUris: string[];
+  accessToken: string; grantedScopes: string[]; name: string; description: string;
+  isPublic: boolean; trackUris: string[]; draftId?: string; recoveryToken?: string;
 };
-
-type CreatedPlaylist = {
-  id: string;
-  name: string;
-  url: string;
-  requestedPublic: boolean;
-  spotifyPublic: boolean | null;
-};
-
 export type SavePlaylistResult = {
-  playlistName: string;
-  playlistId: string;
-  playlistUrl: string;
-  isPublic: boolean | null;
-  tracksAddedCount: number;
+  playlistName: string; playlistId: string; playlistUrl: string;
+  isPublic: boolean | null; tracksAddedCount: number;
 };
+type PlaylistMetadata = { id?: string; public?: boolean | null; owner?: { id?: string }; snapshot_id?: string };
 
 export class PlaylistSaveError extends Error {
   status: number;
   code: string;
-  endpoint?: string;
-  body?: string;
+  retrySafe = false;
+  retryAfterSeconds?: number;
+  recovery?: PlaylistRecovery;
   details?: Record<string, unknown>;
-
-  constructor(
-    message: string,
-    status = 500,
-    code = "playlist_save_failed",
-    details?: { endpoint?: string; body?: string; extra?: Record<string, unknown> },
-  ) {
+  constructor(message: string, status = 502, code = "playlist_save_failed", options?: {
+    retrySafe?: boolean; retryAfterSeconds?: number; recovery?: PlaylistRecovery; extra?: Record<string, unknown>;
+  }) {
     super(message);
     this.name = "PlaylistSaveError";
     this.status = status;
     this.code = code;
-    this.endpoint = details?.endpoint;
-    this.body = details?.body;
-    this.details = details?.extra;
+    Object.assign(this, options);
+    this.details = options?.extra;
   }
 }
 
 export async function savePlaylistToSpotify(input: SavePlaylistInput): Promise<SavePlaylistResult> {
-  const sharedAccessToken = input.accessToken;
-  const isPublic = input.isPublic;
-  console.log("[save] starting save", {
-    tokenTail: sharedAccessToken.slice(-6),
-    grantedScopes: input.grantedScopes,
-    isPublic,
-    trackCount: input.trackUris.length,
-  });
-
   const trackUris = buildTrackUris(input.trackUris);
-  if (trackUris.length === 0) {
-    throw new PlaylistSaveError(
-      "At least one valid Spotify track URI is required.",
-      400,
-      "missing_tracks",
-    );
+  if (!trackUris.length || trackUris.length > 300) throw new PlaylistSaveError("Choose between 1 and 300 valid tracks.", 400, "invalid_tracks", { retrySafe: true });
+  let key: Buffer;
+  let ownerId: string;
+  try {
+    key = getSaveSigningKey(); // Check configuration before any Spotify mutation.
+    const me = await spotifyJson<{ id?: string }>({ path: "/me", accessToken: input.accessToken });
+    if (!me.id) throw new Error("Invalid Spotify profile.");
+    ownerId = me.id;
+  } catch (error) { throw asSaveError(error, true); }
+  const fingerprint = fingerprintPlaylist({ ...input, trackUris });
+  const receipt = input.recoveryToken ? readSaveReceipt(input.recoveryToken, ownerId, fingerprint, key) : null;
+  if (input.recoveryToken && !receipt) {
+    throw new PlaylistSaveError("This recovery link expired or belongs to another draft or Spotify account. Open the existing playlist in Spotify.", 409, "invalid_recovery");
   }
-
-  const playlist = await createPlaylist(sharedAccessToken, {
-    name: input.name,
-    description: input.description,
-    isPublic,
-  });
-  const { snapshotId, tracksAddedCount } = await addTracksInBatches(
-    sharedAccessToken,
-    playlist.id,
-    trackUris,
-    SPOTIFY_TRACKS_BATCH_SIZE,
-    isPublic,
-  );
-  void snapshotId;
-  // Read-only visibility check after updates. Do not mutate visibility here.
-  const observedPublic = await readPlaylistVisibilityAfterSave(
-    sharedAccessToken,
-    playlist.id,
-    isPublic,
-  );
-  const finalVisibility =
-    playlist.spotifyPublic !== null && observedPublic !== null && observedPublic !== playlist.spotifyPublic
-      ? playlist.spotifyPublic
-      : observedPublic ?? playlist.spotifyPublic;
-  if (
-    process.env.NODE_ENV !== "production" &&
-    playlist.spotifyPublic !== null &&
-    observedPublic !== null &&
-    observedPublic !== playlist.spotifyPublic
-  ) {
-    console.log("[save] visibility mismatch between create and post-save GET; using create response", {
-      playlistId: playlist.id,
-      createdPublic: playlist.spotifyPublic,
-      observedPublic,
+  const operationKey = `${ownerId}:${input.draftId ?? fingerprint}`;
+  try {
+    return await runSaveOperation(operationKey, fingerprint, Boolean(receipt), async () => {
+      let playlistId = receipt?.playlistId;
+      let visibility: boolean | null = null;
+      if (!playlistId) {
+        try {
+          const created = await spotifyJson<PlaylistMetadata>({
+            method: "POST", path: "/me/playlists", accessToken: input.accessToken,
+            json: { name: input.name, description: input.description, public: input.isPublic },
+          });
+          if (!created.id || !/^[A-Za-z0-9]{22}$/.test(created.id)) {
+            throw new PlaylistSaveError("Spotify may have created this playlist, but its response was incomplete. Check your Spotify library before saving again.", 502, "save_outcome_unknown");
+          }
+          playlistId = created.id;
+          visibility = typeof created.public === "boolean" ? created.public : null;
+        } catch (error) {
+          if (error instanceof PlaylistSaveError) throw error;
+          const rejected = error instanceof SpotifyClientError && [400, 401, 403, 404, 429].includes(error.status);
+          const failure = asSaveError(error, rejected);
+          if (!rejected) {
+            failure.code = "save_outcome_unknown";
+            failure.message = "Spotify may have created this playlist. Check your Spotify library before saving again.";
+          }
+          throw failure;
+        }
+      }
+      const recovery: PlaylistRecovery = {
+        playlistId, playlistUrl: `https://open.spotify.com/playlist/${playlistId}`,
+        recoveryToken: createSaveReceipt({ playlistId, ownerId, fingerprint }, key),
+      };
+      try {
+        let confirmedCount = 0;
+        if (receipt) {
+          const metadata = await spotifyJson<PlaylistMetadata>({ path: `/playlists/${playlistId}`, accessToken: input.accessToken });
+          if (metadata.owner?.id !== ownerId) throw new PlaylistSaveError("The connected Spotify account does not own this playlist.", 403, "playlist_owner_mismatch");
+          visibility = typeof metadata.public === "boolean" ? metadata.public : null;
+          const existing = await readPlaylistUris(input.accessToken, playlistId);
+          // Never overwrite external edits, or guess when unavailable/relinked tracks cannot be identified.
+          if (existing.length > trackUris.length || existing.some((uri, i) => uri !== trackUris[i])) {
+            throw new PlaylistSaveError("This playlist changed in Spotify. Open it there to review before making further changes.", 409, "playlist_changed");
+          }
+          confirmedCount = existing.length;
+        }
+        if (confirmedCount < trackUris.length) {
+          await addTracksInBatches(input.accessToken, playlistId, trackUris.slice(confirmedCount));
+        }
+        return {
+          playlistName: input.name, playlistId, playlistUrl: recovery.playlistUrl,
+          isPublic: visibility, tracksAddedCount: trackUris.length,
+        };
+      } catch (error) {
+        const failure = asSaveError(error, false);
+        failure.recovery = recovery;
+        failure.message = `Your playlist exists in Spotify. ${failure.message}`;
+        throw failure;
+      }
     });
+  } catch (error) {
+    if (error instanceof SaveOperationConflict) throw new PlaylistSaveError(error.message, 409, "save_conflict");
+    throw error;
   }
-  return {
-    playlistName: playlist.name,
-    playlistId: playlist.id,
-    playlistUrl: playlist.url,
-    isPublic: finalVisibility,
-    tracksAddedCount,
-  };
+}
+
+// Reads the existing sequence before an explicit recovery. Never follow arbitrary upstream URLs.
+async function readPlaylistUris(accessToken: string, playlistId: string): Promise<Array<string | null>> {
+  const uris: Array<string | null> = [];
+  for (let offset = 0; offset <= 300; offset += 50) {
+    const page = await spotifyJson<{
+      items?: Array<{ item?: { uri?: string; linked_from?: { uri?: string } } | null; track?: { uri?: string; linked_from?: { uri?: string } } | null }>;
+      next?: string | null;
+    }>({ path: `/playlists/${playlistId}/items`, accessToken, query: { limit: 50, offset } });
+    if (!Array.isArray(page.items) || !(page.next === null || typeof page.next === "string")) throw new Error("Invalid Spotify playlist response.");
+    for (const entry of page.items) {
+      const track = entry.item ?? entry.track;
+      uris.push(track?.linked_from?.uri ?? track?.uri ?? null);
+    }
+    if (!page.next) return uris;
+  }
+  throw new PlaylistSaveError("This playlist has changed. Review it in Spotify before continuing.", 409, "playlist_changed");
 }
 
 export async function addTracksInBatches(
-  accessToken: string,
-  playlistId: string,
-  trackUris: string[],
-  batchSize = SPOTIFY_TRACKS_BATCH_SIZE,
-  requestedPublic?: boolean,
+  accessToken: string, playlistId: string, trackUris: string[], batchSize = SPOTIFY_TRACKS_BATCH_SIZE,
 ): Promise<{ snapshotId: string | null; tracksAddedCount: number }> {
-  const validatedTrackUris = validateTrackUris(trackUris);
-  if (validatedTrackUris.length === 0) {
-    throw new PlaylistSaveError(
-      "At least one valid Spotify track URI is required.",
-      400,
-      "missing_tracks",
-      { endpoint: `/playlists/${playlistId}/items`, body: '{"uris":[]}' },
-    );
-  }
-  const batches = chunkTrackUris(
-    validatedTrackUris,
-    Math.min(100, Math.max(1, Math.trunc(batchSize))),
-  );
-  let latestSnapshotId: string | null = null;
-  let addedCount = 0;
-  const endpoint = `/playlists/${playlistId}/items`;
-  // /me succeeds only for user tokens from Authorization Code flow.
-  const me = await getCurrentSpotifyUser(accessToken);
-  if (requestedPublic === false) {
-    await enforcePrivateBeforeInsert(accessToken, playlistId);
-  }
-  for (const uris of batches) {
-    let attemptedPrivateReenforceAfter403 = false;
-    for (let attempt = 1; attempt <= 3; attempt += 1) {
-      try {
-        const data = await spotifyJson<{ snapshot_id?: string }>({
-          method: "POST",
-          path: endpoint,
-          accessToken,
-          json: { uris },
-        });
-        addedCount += uris.length;
-        latestSnapshotId =
-          typeof data.snapshot_id === "string" ? data.snapshot_id : latestSnapshotId;
-        break;
-      } catch (error) {
-        if (!(error instanceof SpotifyClientError)) {
-          throw error;
-        }
-
-        if (error.status === 403) {
-          if (requestedPublic === false && !attemptedPrivateReenforceAfter403) {
-            attemptedPrivateReenforceAfter403 = true;
-            await enforcePrivateBeforeInsert(accessToken, playlistId);
-            traceSaveLibrary("spotify_add_tracks_403_private_retry", {
-              playlistId,
-              attempt,
-            });
-            continue;
-          }
-          // Spotify can reject a whole batch when it contains explicit/restricted tracks.
-          const filteredUris = await dropExplicitUrisForFilteredAccounts(
-            accessToken,
-            uris,
-          );
-          if (filteredUris.length === 0 && uris.length > 0) {
-            throw new PlaylistSaveError(
-              "All generated tracks were rejected by Spotify for this account. Try generating a different set.",
-              403,
-              "spotify_add_tracks_failed",
-              {
-                endpoint,
-                body: error.bodyText,
-                extra: {
-                  tracksAddedCount: addedCount,
-                  rejectedCount: uris.length,
-                },
-              },
-            );
-          }
-          if (filteredUris.length > 0 && filteredUris.length < uris.length) {
-            const retryData = await spotifyJson<{ snapshot_id?: string }>({
-              method: "POST",
-              path: endpoint,
-              accessToken,
-              json: { uris: filteredUris },
-            });
-            addedCount += filteredUris.length;
-            latestSnapshotId =
-              typeof retryData.snapshot_id === "string"
-                ? retryData.snapshot_id
-                : latestSnapshotId;
-            traceSaveLibrary("spotify_add_tracks_403_filtered_retry", {
-              playlistId,
-              originalCount: uris.length,
-              filteredCount: filteredUris.length,
-              explicitFilterEnabled: me.explicit_content?.filter_enabled === true,
-            });
-            break;
-          }
-          await logPlaylistOwnershipForForbidden(accessToken, playlistId, me.id);
-          traceSaveLibrary("spotify_add_tracks_403", {
-            playlistId,
-            endpoint,
-            bodyExcerpt: error.bodyText.slice(0, 240),
-          });
-          throw new PlaylistSaveError(
-            formatSpotifyApiErrorMessage(error.status, error.bodyText, error.responseHeaders),
-            error.status,
-            "spotify_add_tracks_failed",
-            { endpoint, body: error.bodyText, extra: { tracksAddedCount: addedCount } },
-          );
-        }
-
-        const retriable =
-          (error.status === 429 || (error.status >= 500 && error.status <= 599)) &&
-          attempt < 3;
-        if (retriable) {
-          traceSaveLibrary("spotify_add_tracks_retry", {
-            playlistId,
-            status: error.status,
-            attempt,
-          });
-          await wait(300 * attempt);
-          continue;
-        }
-
-        throw new PlaylistSaveError(
-          formatSpotifyApiErrorMessage(error.status, error.bodyText, error.responseHeaders),
-          error.status,
-          "spotify_add_tracks_failed",
-          { endpoint, body: error.bodyText, extra: { tracksAddedCount: addedCount } },
-        );
-      }
-    }
-  }
-
-  return {
-    snapshotId: latestSnapshotId,
-    tracksAddedCount: addedCount,
-  };
-}
-
-async function enforcePrivateBeforeInsert(accessToken: string, playlistId: string): Promise<void> {
-  if (process.env.NODE_ENV !== "production") {
-    console.log("[save] pre-insert visibility PUT body", { playlistId, public: false });
-  }
-  try {
-    await spotifyJson({
-      method: "PUT",
-      path: `/playlists/${playlistId}`,
-      accessToken,
-      json: { public: false },
-    });
-    await wait(500);
-  } catch (error) {
-    if (error instanceof SpotifyClientError) {
-      traceSaveLibrary("spotify_pre_add_private_enforce_warning", {
-        playlistId,
-        status: error.status,
-        endpoint: error.path,
+  const uris = buildTrackUris(trackUris);
+  if (!uris.length) throw new PlaylistSaveError("At least one valid track is required.", 400, "missing_tracks", { retrySafe: true });
+  let snapshotId: string | null = null;
+  let tracksAddedCount = 0;
+  for (const batch of chunkTrackUris(uris, batchSize)) {
+    try {
+      const result = await spotifyJson<{ snapshot_id?: string }>({
+        method: "POST", path: `/playlists/${playlistId}/items`, accessToken, json: { uris: batch },
       });
-      return;
+      if (typeof result.snapshot_id !== "string") throw new Error("Missing playlist snapshot.");
+      snapshotId = result.snapshot_id;
+      tracksAddedCount += batch.length;
+    } catch (error) {
+      const failure = asSaveError(error, false);
+      failure.details = { tracksAddedCount };
+      throw failure;
     }
-    throw error;
   }
+  return { snapshotId, tracksAddedCount };
 }
 
-async function dropExplicitUrisForFilteredAccounts(
-  accessToken: string,
-  uris: string[],
-): Promise<string[]> {
-  const trackIds = Array.from(
-    new Set(uris.map((uri) => extractTrackId(uri)).filter((id): id is string => Boolean(id))),
-  );
-  if (trackIds.length === 0) {
-    return uris;
-  }
-
-  const explicitById = new Map<string, boolean>();
-  const chunks = chunkTrackUris(trackIds, SPOTIFY_TRACK_DETAILS_CONCURRENCY);
-  for (const chunk of chunks) {
-    const chunkDetails = await Promise.all(
-      chunk.map(async (trackId) => ({
-        trackId,
-        explicit: await lookupTrackExplicit(accessToken, trackId),
-      })),
-    );
-
-    if (chunkDetails.some((item) => item.explicit === null)) {
-      return uris;
-    }
-
-    for (const item of chunkDetails) {
-      explicitById.set(item.trackId, item.explicit === true);
-    }
-  }
-
-  return uris.filter((uri) => {
-    const id = extractTrackId(uri);
-    if (!id) {
-      return true;
-    }
-    return explicitById.get(id) !== true;
+function asSaveError(error: unknown, retrySafe: boolean): PlaylistSaveError {
+  if (error instanceof PlaylistSaveError) return error;
+  const failure = getSpotifyFailure(error);
+  return new PlaylistSaveError(failure.message, failure.status, failure.code, {
+    retrySafe, retryAfterSeconds: failure.retryAfterSeconds,
   });
 }
 
-async function lookupTrackExplicit(
-  accessToken: string,
-  trackId: string,
-): Promise<boolean | null> {
-  try {
-    const track = await spotifyJson<SpotifyTrackDetailsResponse>({
-      method: "GET",
-      path: `/tracks/${trackId}`,
-      accessToken,
-    });
-    if (!track.id) {
-      return null;
-    }
-    return track.explicit === true;
-  } catch {
-    return null;
-  }
-}
-
-async function getCurrentSpotifyUser(accessToken: string): Promise<SpotifyMeResponse> {
-  try {
-    const me = await spotifyJson<SpotifyMeResponse>({
-      method: "GET",
-      path: "/me",
-      accessToken,
-    });
-    console.log("[save] /me identity", { meId: me.id, tokenTail: accessToken.slice(-6) });
-    return me;
-  } catch (error) {
-    if (error instanceof SpotifyClientError) {
-      const isForbidden = error.status === 403;
-      const message = isForbidden
-        ? "Spotify returned 403 on /me. If your app is in Development Mode, add your account at developer.spotify.com/dashboard → App → User Management."
-        : "Spotify user token is invalid for track operations. Reconnect Spotify.";
-      console.error("[save] /me failed", {
-        status: error.status,
-        tokenTail: accessToken.slice(-6),
-        body: error.bodyText,
-      });
-      throw new PlaylistSaveError(
-        message,
-        error.status,
-        isForbidden ? "spotify_dev_mode_forbidden" : "spotify_me_failed",
-        { endpoint: error.path, body: error.bodyText },
-      );
-    }
-    throw error;
-  }
-}
-
-async function logPlaylistOwnershipForForbidden(
-  accessToken: string,
-  playlistId: string,
-  meId: string,
-): Promise<void> {
-  try {
-    const playlist = await spotifyJson<SpotifyPlaylistMetaResponse>({
-      method: "GET",
-      path: `/playlists/${playlistId}`,
-      accessToken,
-    });
-    const ownerMatchesMe = playlist.owner?.id === meId;
-    console.error("[save] 403 ownership context", {
-      meId,
-      playlistId,
-      playlistOwnerId: playlist.owner?.id ?? null,
-      ownerMatchesMe,
-      collaborative: playlist.collaborative ?? null,
-      public: playlist.public ?? null,
-      tokenTail: accessToken.slice(-6),
-    });
-    if (!ownerMatchesMe) {
-      throw new PlaylistSaveError(
-        "The connected Spotify account does not own this playlist.",
-        403,
-        "playlist_owner_mismatch",
-        { endpoint: `/playlists/${playlistId}` },
-      );
-    }
-  } catch (error) {
-    if (error instanceof PlaylistSaveError) {
-      throw error;
-    }
-    if (error instanceof SpotifyClientError) {
-      console.error("[save] 403 ownership context fetch failed", {
-        playlistId,
-        status: error.status,
-        endpoint: error.path,
-        tokenTail: accessToken.slice(-6),
-      });
-      return;
-    }
-    throw error;
-  }
-}
-
-export function chunkTrackUris(trackUris: string[], batchSize = SPOTIFY_TRACKS_BATCH_SIZE): string[][] {
-  if (batchSize < 1) {
-    return [trackUris];
-  }
-
+export function chunkTrackUris(uris: string[], batchSize = SPOTIFY_TRACKS_BATCH_SIZE): string[][] {
+  const size = Number.isFinite(batchSize) ? Math.min(100, Math.max(1, Math.trunc(batchSize))) : 100;
   const chunks: string[][] = [];
-  for (let index = 0; index < trackUris.length; index += batchSize) {
-    chunks.push(trackUris.slice(index, index + batchSize));
-  }
-
+  for (let index = 0; index < uris.length; index += size) chunks.push(uris.slice(index, index + size));
   return chunks;
 }
-
-async function createPlaylist(
-  accessToken: string,
-  input: { name: string; description: string; isPublic: boolean },
-): Promise<CreatedPlaylist> {
-  const isPublic = input.isPublic;
-  const payload = {
-    name: input.name,
-    description: input.description,
-    public: isPublic,
-  };
-  if (process.env.NODE_ENV !== "production") {
-    console.log("[save] create playlist payload visibility", { public: payload.public });
-  }
-  let createdPlaylist: SpotifyCreatePlaylistResponse;
-  try {
-    createdPlaylist = await spotifyJson<SpotifyCreatePlaylistResponse>({
-      method: "POST",
-      path: "/me/playlists",
-      accessToken,
-      json: payload,
-    });
-  } catch (error) {
-    if (error instanceof SpotifyClientError) {
-      throw new PlaylistSaveError(
-        formatSpotifyApiErrorMessage(error.status, error.bodyText, error.responseHeaders),
-        error.status,
-        "spotify_save_failed",
-        { endpoint: error.path, body: error.bodyText },
-      );
-    }
-    throw error;
-  }
-  traceSaveLibrary("spotify_create_playlist_response_meta", {
-    playlistId: createdPlaylist.id,
-    requestedPublic: isPublic,
-    playlistPublic: createdPlaylist.public ?? null,
-    playlistOwnerId: createdPlaylist.owner?.id ?? null,
-    playlistCollaborative: createdPlaylist.collaborative ?? null,
-  });
-  if (process.env.NODE_ENV !== "production") {
-    console.log("[save] create playlist response visibility", {
-      playlistId: createdPlaylist.id,
-      playlistPublic: createdPlaylist.public ?? null,
-    });
-  }
-  traceSaveLibrary("spotify_create_playlist_raw_public", {
-    source: "create_response",
-    playlistId: createdPlaylist.id,
-    publicValue: createdPlaylist.public ?? null,
-    publicType: typeof createdPlaylist.public,
-    pick: {
-      id: createdPlaylist.id,
-      public: createdPlaylist.public ?? null,
-      collaborative: createdPlaylist.collaborative ?? null,
-      owner: { id: createdPlaylist.owner?.id ?? null },
-      external_urls: createdPlaylist.external_urls ?? null,
-    },
-  });
-  return {
-    id: createdPlaylist.id,
-    name: input.name,
-    url: createdPlaylist.external_urls.spotify,
-    requestedPublic: isPublic,
-    spotifyPublic: createdPlaylist.public ?? null,
-  };
+export function buildTrackUris(identifiers: string[]): string[] {
+  return [...new Set(identifiers.map((value) => value.trim())
+    .map((value) => /^[A-Za-z0-9]{22}$/.test(value) ? `spotify:track:${value}` : value)
+    .filter((value) => /^spotify:track:[A-Za-z0-9]{22}$/.test(value)))];
 }
-
-async function readPlaylistVisibilityAfterSave(
-  accessToken: string,
-  playlistId: string,
-  requestedPublic: boolean,
-): Promise<boolean | null> {
-  try {
-    await wait(750);
-    const refreshedPlaylist = await spotifyJson<SpotifyCreatePlaylistResponse>({
-      method: "GET",
-      path: `/playlists/${playlistId}`,
-      accessToken,
-    });
-    if (process.env.NODE_ENV !== "production") {
-      console.log("[save] post-save GET playlist visibility raw", {
-        id: refreshedPlaylist.id ?? null,
-        public: refreshedPlaylist.public ?? null,
-        publicType: typeof refreshedPlaylist.public,
-        collaborative: refreshedPlaylist.collaborative ?? null,
-        ownerId: refreshedPlaylist.owner?.id ?? null,
-        spotifyUrl: refreshedPlaylist.external_urls?.spotify ?? null,
-      });
-    }
-    const observedPublic = refreshedPlaylist.public === true;
-    const confirmed = observedPublic === requestedPublic;
-    traceSaveLibrary("spotify_visibility_post_save_check", {
-      playlistId,
-      requestedPublic,
-      observedPublic,
-      confirmed,
-    });
-    return observedPublic;
-  } catch (error) {
-    if (error instanceof SpotifyClientError) {
-      traceSaveLibrary("spotify_visibility_post_save_warning", {
-        playlistId,
-        requestedPublic,
-        status: error.status,
-        endpoint: error.path,
-        bodyExcerpt: error.bodyText.slice(0, 200),
-      });
-      return null;
-    }
-    throw error;
-  }
-}
-
-export function buildTrackUris(trackIdentifiers: string[]): string[] {
-  const normalized = trackIdentifiers
-    .map((value) => value.trim())
-    .filter(Boolean)
-    .map((value) => {
-      if (/^spotify:track:[A-Za-z0-9]{22}$/.test(value)) {
-        return value;
-      }
-
-      if (/^[A-Za-z0-9]{22}$/.test(value)) {
-        return `spotify:track:${value}`;
-      }
-
-      return null;
-    })
-    .filter((value): value is string => value !== null);
-
-  return Array.from(new Set(normalized));
-}
-
 export const normalizeTrackUris = buildTrackUris;
-export function validateTrackUris(trackUris: string[]): string[] {
-  const normalized = buildTrackUris(trackUris);
-  if (normalized.length === 0) {
-    return [];
-  }
-
-  return normalized.filter((uri) => uri.startsWith("spotify:track:"));
-}
-
-function traceSaveLibrary(event: string, payload: Record<string, unknown>): void {
-  if (process.env.SPOTIFY_DEBUG !== "1") {
-    return;
-  }
-  console.log(`[TRACE][save-lib] ${event}`, payload);
-}
-
-async function wait(ms: number): Promise<void> {
-  await new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
-
-function excerpt(value: string): string {
-  return value.length > 220 ? `${value.slice(0, 217)}...` : value;
-}
-
-function extractTrackId(trackUriOrId: string): string | null {
-  const fromUri = trackUriOrId.match(/^spotify:track:([A-Za-z0-9]{22})$/)?.[1];
-  if (fromUri) {
-    return fromUri;
-  }
-  return /^[A-Za-z0-9]{22}$/.test(trackUriOrId) ? trackUriOrId : null;
-}
+export const validateTrackUris = buildTrackUris;

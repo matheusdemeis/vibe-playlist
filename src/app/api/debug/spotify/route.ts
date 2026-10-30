@@ -14,14 +14,12 @@ export async function GET() {
 
   const { accessToken, grantedScopes, tokenResponseScopeRaw } = await getSpotifySession();
   const hasAccessToken = Boolean(accessToken);
-  const tokenPrefix = accessToken ? accessToken.slice(0, 8) : null;
 
   if (!accessToken) {
     return NextResponse.json({
       hasAccessToken,
       grantedScopes,
       tokenResponseScopeRaw,
-      tokenPrefix,
       meStatus: null,
       meId: null,
       playlistsStatus: null,
@@ -57,7 +55,6 @@ export async function GET() {
     hasAccessToken,
     grantedScopes,
     tokenResponseScopeRaw,
-    tokenPrefix,
     meStatus: meResponse.status,
     meId,
     playlistsStatus: playlistsResponse.status,

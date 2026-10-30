@@ -1,6 +1,6 @@
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import type { NextConfig } from "next";
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import type { NextConfig } from 'next';
 
 const configRoot = path.dirname(fileURLToPath(import.meta.url));
 
@@ -9,12 +9,9 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: configRoot,
   },
-  ...(process.env.NODE_ENV !== "production"
+  ...(process.env.NODE_ENV !== 'production'
     ? {
-        allowedDevOrigins: [
-          "http://127.0.0.1:5000",
-          "http://localhost:5000",
-        ],
+        allowedDevOrigins: ['127.0.0.1', 'localhost'],
       }
     : {}),
 };

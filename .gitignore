@@ -40,3 +40,14 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# md
+phase-1-audit.md
+phase-2-reliability.md
+phase-3-redesign.md
+phase-4-generation.md
+phase-5-readiness.md
+# Browser test output
+/playwright-report/
+/test-results/
+!.env.example

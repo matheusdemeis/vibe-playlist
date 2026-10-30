@@ -12,7 +12,6 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({
     connected: Boolean(accessToken),
     hasAccessToken: Boolean(accessToken),
-    tokenPrefix: accessToken ? accessToken.slice(0, 6) : null,
     grantedScopes,
     requestHost: request.headers.get("host"),
     cookieNames,

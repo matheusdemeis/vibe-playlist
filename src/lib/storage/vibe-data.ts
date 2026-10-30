@@ -37,7 +37,7 @@ export type StorageLike = {
 };
 
 export function listPresets(storage = getBrowserStorage()): Preset[] {
-  return readJson<Preset[]>(storage, PRESETS_KEY, []);
+  return readJson<unknown[]>(storage, PRESETS_KEY, []).filter(isPreset).slice(0, PRESET_LIMIT);
 }
 
 export function savePreset(name: string, settings: VibeBuilderInput, storage = getBrowserStorage()): Preset {
@@ -70,7 +70,7 @@ export function deletePreset(presetId: string, storage = getBrowserStorage()): v
 }
 
 export function listHistory(storage = getBrowserStorage()): HistoryItem[] {
-  return readJson<HistoryItem[]>(storage, HISTORY_KEY, []);
+  return readJson<unknown[]>(storage, HISTORY_KEY, []).filter(isHistoryItem).slice(0, HISTORY_LIMIT);
 }
 
 export function addHistoryItem(
@@ -115,29 +115,51 @@ function getBrowserStorage(): StorageLike {
     return createNoopStorage();
   }
 
-  return window.localStorage;
+  try { return window.localStorage; } catch { return createNoopStorage(); }
 }
 
 function readJson<T>(storage: StorageLike, key: string, fallback: T): T {
-  const value = storage.getItem(key);
-  if (!value) {
-    return fallback;
-  }
-
   try {
-    return JSON.parse(value) as T;
+    const value = storage.getItem(key);
+    if (!value) return fallback;
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed as T : fallback;
   } catch {
     return fallback;
   }
 }
 
 function writeJson(storage: StorageLike, key: string, value: unknown): void {
-  storage.setItem(key, JSON.stringify(value));
+  try { storage.setItem(key, JSON.stringify(value)); } catch {
+    throw new Error("Could not save browser data. Check your storage settings.");
+  }
 }
 
 function createNoopStorage(): StorageLike {
   return {
     getItem: () => null,
-    setItem: () => {},
+    setItem: () => { throw new Error("Browser storage is unavailable."); },
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+function isSettings(value: unknown): value is VibeBuilderInput {
+  if (!isRecord(value)) return false;
+  return [value.vibes, value.genres].every((items) => Array.isArray(items) && items.every((item) => typeof item === "string")) &&
+    [value.energy, value.valence, value.trackCount].every((n) => typeof n === "number" && Number.isFinite(n)) &&
+    ["Slow", "Medium", "Fast"].includes(String(value.tempo)) && typeof value.explicit === "boolean";
+}
+function isPreset(value: unknown): value is Preset {
+  return isRecord(value) && typeof value.id === "string" && typeof value.name === "string" &&
+    typeof value.createdAt === "string" && isSettings(value.settings);
+}
+function isHistoryItem(value: unknown): value is HistoryItem {
+  if (!isRecord(value) || typeof value.id !== "string" || typeof value.createdAt !== "string" || !isSettings(value.settings) || !Array.isArray(value.topTracks)) return false;
+  if (!value.topTracks.every((track) => isRecord(track) && typeof track.id === "string" && typeof track.name === "string" &&
+    typeof track.uri === "string" && Array.isArray(track.artists) && track.artists.every((name) => typeof name === "string") &&
+    (track.image === null || typeof track.image === "string"))) return false;
+  return value.playlist === null || (isRecord(value.playlist) && typeof value.playlist.id === "string" &&
+    typeof value.playlist.url === "string" && value.playlist.url.startsWith("https://open.spotify.com/playlist/"));
 }

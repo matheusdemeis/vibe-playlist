@@ -1,212 +1,211 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Icon, SpotifyIcon } from "@/components/ui/Icon";
+import { MoodArtwork } from "@/components/MoodArtwork";
+import { normalizeVibeKey } from "@/lib/vibes";
+import { SpotifyConnection } from "@/components/vibe/ConnectionCard";
+import { GenerationProgress } from "@/components/vibe/GenerationProgress";
+import { SavePlaylistDialog } from "@/components/vibe/SavePlaylistDialog";
+import { SaveSuccess } from "@/components/vibe/SaveSuccess";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
-  DEFAULT_VIBE_INPUT,
-  TEMPO_OPTIONS,
   buildVibeGeneratorRequest,
-  type TempoOption,
-  type VibeBuilderInput,
+  readVibeBuilderQuery,
 } from "@/lib/vibe-builder";
 import type { PlaylistGenerationResponse } from "@/lib/playlist/generate";
-import { addHistoryItem, attachPlaylistToHistory } from "@/lib/storage/vibe-data";
+import {
+  addHistoryItem,
+  attachPlaylistToHistory,
+} from "@/lib/storage/vibe-data";
+import { apiErrorMessage, retryDelayMs } from "@/lib/storage/playlist-draft";
+import { usePlaylistDraft } from "@/components/vibe/usePlaylistDraft";
 import { ResultsActionBar } from "@/components/vibe/ResultsActionBar";
 import { TrackList } from "@/components/vibe/TrackList";
 
-type GenerateVibeApiError = {
-  error: string;
-  code: string;
-};
-
-type SavePlaylistApiError = {
-  error: string;
-  code: string;
-};
-
-type SavePlaylistApiSuccess = {
-  playlistName: string;
-  playlistId: string;
-  playlistUrl: string;
-  isPublic: boolean | null;
-  snapshotId: string | null;
-  tracksAddedCount: number;
-  tracksAdded: boolean;
-  warning?: string;
-  visibility: {
-    requested: boolean;
-    final: boolean | null;
-  };
-};
-
 type PlaylistVisibility = "private" | "public";
-
-function readRequestInput(params: URLSearchParams): VibeBuilderInput {
-  const vibes = params.get("vibes")?.split(",").filter(Boolean) ?? [];
-  const genres = params.get("genres")?.split(",").filter(Boolean) ?? [];
-  const energy = Number(params.get("energy"));
-  const valence = Number(params.get("valence"));
-  const tempo = params.get("tempo");
-  const trackCount = Number(params.get("trackCount"));
-  const explicit = params.get("explicit");
-
-  return {
-    vibes,
-    genres,
-    energy: Number.isFinite(energy) ? energy : DEFAULT_VIBE_INPUT.energy,
-    valence: Number.isFinite(valence) ? valence : DEFAULT_VIBE_INPUT.valence,
-    tempo:
-      TEMPO_OPTIONS.includes(tempo as TempoOption)
-        ? (tempo as TempoOption)
-        : DEFAULT_VIBE_INPUT.tempo,
-    trackCount: Number.isFinite(trackCount) ? trackCount : DEFAULT_VIBE_INPUT.trackCount,
-    explicit: explicit === null ? DEFAULT_VIBE_INPUT.explicit : explicit === "true",
-  };
-}
 
 export default function VibeResultsClient() {
   const searchParams = useSearchParams();
-  const [tracks, setTracks] = useState<PlaylistGenerationResponse["tracks"]>([]);
+  const queryString = searchParams.toString();
+  const cleanQuery = useMemo(() => {
+    const params = new URLSearchParams(queryString);
+    params.delete("auth_error");
+    return params.toString();
+  }, [queryString]);
+  const {
+    draft,
+    tracks,
+    hydrated,
+    replaceTracks,
+    editTracks,
+    save,
+    isSaving: isSavingPlaylist,
+    saveError,
+    saveResult,
+    canSave,
+  } = usePlaylistDraft<PlaylistGenerationResponse["tracks"][number]>(
+    `vibeplay_advanced_draft_v1:${cleanQuery}`,
+  );
   const [lockedTrackIds, setLockedTrackIds] = useState<string[]>([]);
-  const [lockedTrackCache, setLockedTrackCache] = useState<
-    Record<string, PlaylistGenerationResponse["tracks"][number]>
-  >({});
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
   const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
   const [playlistName, setPlaylistName] = useState("");
   const [playlistDescription, setPlaylistDescription] = useState("");
-  const [playlistVisibility, setPlaylistVisibility] = useState<PlaylistVisibility>("private");
-  const [isSavingPlaylist, setIsSavingPlaylist] = useState(false);
-  const [isRetryingAddTracks, setIsRetryingAddTracks] = useState(false);
-  const [saveErrorMessage, setSaveErrorMessage] = useState<string | null>(null);
-  const [saveResult, setSaveResult] = useState<SavePlaylistApiSuccess | null>(null);
-  const [savedPlaylistName, setSavedPlaylistName] = useState<string>("");
+  const [playlistVisibility, setPlaylistVisibility] =
+    useState<PlaylistVisibility>("private");
   const [latestHistoryId, setLatestHistoryId] = useState<string | null>(null);
+  const retryAt = useRef(0);
+  const generation = useRef<AbortController | null>(null);
+  const latest = useRef({ tracks, lockedTrackIds });
+  const initializedQuery = useRef<string | null>(null);
+  const saveErrorMessage = saveError ?? draft?.attempt?.message ?? null;
+  const returnTo = `/vibe/results?${cleanQuery}`;
 
-  const queryString = searchParams.toString();
+  useEffect(() => {
+    latest.current = { tracks, lockedTrackIds };
+  }, [tracks, lockedTrackIds]);
+
   const requestParse = useMemo(() => {
-    const input = readRequestInput(searchParams);
-
+    const input = readVibeBuilderQuery(new URLSearchParams(cleanQuery));
     try {
-      const request = buildVibeGeneratorRequest(input);
-      return { input, request, error: null as string | null };
+      return {
+        input,
+        request: buildVibeGeneratorRequest(input),
+        error: null as string | null,
+      };
     } catch (error) {
       return {
         input,
         request: null,
-        error: error instanceof Error ? error.message : "Request validation failed.",
+        error:
+          error instanceof Error ? error.message : "Request validation failed.",
       };
     }
-  }, [searchParams]);
-
-  const defaultPlaylistName = useMemo(() => {
-    if (!requestParse.request) {
-      return "";
-    }
-
-    return buildDefaultPlaylistName(requestParse.request.vibes, requestParse.request.targetEnergy);
-  }, [requestParse.request]);
-
-  const defaultPlaylistDescription = useMemo(() => {
-    if (!requestParse.request) {
-      return "";
-    }
-
-    const vibeText =
-      requestParse.request.vibes.length > 0
-        ? requestParse.request.vibes.join(", ")
-        : "custom vibe settings";
-    return `Generated with Vibe Builder from ${vibeText}.`;
-  }, [requestParse.request]);
+  }, [cleanQuery]);
+  const defaultPlaylistName = `${requestParse.input.vibes[0] ?? "Custom"} • VibePlay`;
+  const defaultPlaylistDescription = `Generated with VibePlay from ${requestParse.input.vibes.join(", ") || requestParse.input.genres.join(", ")}.`;
 
   const fetchResults = useCallback(async () => {
-    if (!requestParse.request) {
+    if (!requestParse.request || generation.current || isSavingPlaylist) return;
+    if (Date.now() < retryAt.current) {
+      setErrorMessage(
+        `Spotify asked us to wait. Try again in ${Math.ceil((retryAt.current - Date.now()) / 1000)} seconds.`,
+      );
       return;
     }
-
+    const controller = new AbortController();
+    generation.current = controller;
+    const previous = latest.current;
     setIsLoading(true);
     setErrorMessage(null);
-
     try {
       const response = await fetch("/api/vibe/generate", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
+        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(90_000)]),
         body: JSON.stringify({
-          seedGenres: requestParse.request.seedGenres,
-          targetEnergy: requestParse.request.targetEnergy,
-          targetValence: requestParse.request.targetValence,
-          tempo: requestParse.request.tempo,
-          trackCount: requestParse.request.trackCount,
-          referenceTrackIds: lockedTrackIds,
+          ...requestParse.request,
+          referenceTrackIds: previous.lockedTrackIds,
         }),
       });
-
+      const data = (await response.json()) as PlaylistGenerationResponse & {
+        warning?: string;
+      };
+      if (controller.signal.aborted) return;
       if (!response.ok) {
-        const data = (await response.json()) as GenerateVibeApiError;
-        setErrorMessage(data.error ?? "Could not generate tracks right now.");
+        retryAt.current = Date.now() + retryDelayMs(data, response.headers);
+        setErrorMessage(
+          apiErrorMessage(data, "Could not generate tracks right now."),
+        );
         return;
       }
-
-      const data = (await response.json()) as PlaylistGenerationResponse;
-      setTracks((currentTracks) => {
-        const mergedTracks = mergeLockedTracks(
-          data.tracks,
-          lockedTrackIds,
-          lockedTrackCache,
-          requestParse.request.trackCount,
-          currentTracks,
+      const merged = mergeLockedTracks(
+        data.tracks,
+        previous.lockedTrackIds,
+        {},
+        requestParse.request.trackCount,
+        previous.tracks,
+      );
+      if (!merged.length) {
+        setErrorMessage(
+          "No tracks found. Try another mood or genre; your previous mix is still available.",
         );
-
+        return;
+      }
+      replaceTracks(merged);
+      setWarning(data.warning ?? null);
+      setIsSaveModalOpen(false);
+      try {
         const historyItem = addHistoryItem({
           settings: requestParse.input,
-          topTracks: mergedTracks.slice(0, 5).map((track) => ({
-            id: track.id,
-            name: track.name,
-            artists: track.artists,
-            image: track.image,
-            uri: track.uri,
-          })),
+          topTracks: merged
+            .slice(0, 5)
+            .map((track) => ({
+              id: track.id,
+              name: track.name,
+              artists: track.artists,
+              image: track.image,
+              uri: track.uri,
+            })),
           playlist: null,
         });
         setLatestHistoryId(historyItem.id);
-
-        return mergedTracks;
-      });
+      } catch {
+        setLatestHistoryId(null);
+        setWarning(
+          [
+            data.warning,
+            "Your mix is ready, but browser history could not be saved.",
+          ]
+            .filter(Boolean)
+            .join(" "),
+        );
+      }
     } catch {
-      setTracks([]);
-      setErrorMessage("Could not generate tracks right now.");
+      if (!controller.signal.aborted)
+        setErrorMessage(
+          "Could not reach Spotify. Your previous mix is still available; please retry.",
+        );
     } finally {
-      setIsLoading(false);
+      if (generation.current === controller) {
+        generation.current = null;
+        setIsLoading(false);
+      }
     }
-  }, [lockedTrackCache, lockedTrackIds, requestParse.input, requestParse.request]);
+  }, [isSavingPlaylist, replaceTracks, requestParse]);
 
   useEffect(() => {
-    if (!requestParse.request) {
-      setTracks([]);
-      return;
-    }
+    if (!hydrated || initializedQuery.current === cleanQuery) return;
+    initializedQuery.current = cleanQuery;
+    if (!draft) void fetchResults();
+  }, [cleanQuery, draft, fetchResults, hydrated]);
 
-    void fetchResults();
-  }, [fetchResults, requestParse.request]);
+  useEffect(
+    () => () => {
+      generation.current?.abort();
+      generation.current = null;
+      initializedQuery.current = null;
+    },
+    [cleanQuery],
+  );
 
-  useEffect(() => {
-    if (!requestParse.request) {
-      setPlaylistName("");
-      setPlaylistDescription("");
-      return;
-    }
-
-    setPlaylistName(defaultPlaylistName);
-    setPlaylistDescription(defaultPlaylistDescription);
-    setPlaylistVisibility("private");
-  }, [defaultPlaylistDescription, defaultPlaylistName, requestParse.request]);
+  const handleOpenSaveModal = () => {
+    setPlaylistName(draft?.attempt?.payload.name ?? defaultPlaylistName);
+    setPlaylistDescription(
+      draft?.attempt?.payload.description ?? defaultPlaylistDescription,
+    );
+    setPlaylistVisibility(
+      draft?.attempt?.payload.isPublic ? "public" : "private",
+    );
+    setIsSaveModalOpen(true);
+  };
 
   const handleShuffle = () => {
-    setTracks((previous) => {
+    editTracks((previous) => {
       const next = [...previous];
       for (let index = next.length - 1; index > 0; index -= 1) {
         const swapIndex = Math.floor(Math.random() * (index + 1));
@@ -215,433 +214,255 @@ export default function VibeResultsClient() {
       return next;
     });
   };
-
   const handleRemoveTrack = (trackId: string) => {
-    setTracks((previous) => previous.filter((track) => track.id !== trackId));
+    if (draft?.attempt || isLoading || isSavingPlaylist) return;
+    editTracks((previous) => previous.filter((track) => track.id !== trackId));
     setLockedTrackIds((previous) => previous.filter((id) => id !== trackId));
   };
-
   const handleToggleLock = (trackId: string) => {
-    setLockedTrackIds((previous) => {
-      if (previous.includes(trackId)) {
-        return previous.filter((id) => id !== trackId);
-      }
-      return [...previous, trackId];
-    });
+    if (isLoading || isSavingPlaylist) return;
+    setLockedTrackIds((previous) =>
+      previous.includes(trackId)
+        ? previous.filter((id) => id !== trackId)
+        : [...previous, trackId],
+    );
   };
-
   const handleSaveToSpotify = async () => {
-    if (tracks.length === 0) {
-      setSaveErrorMessage("No tracks available to save.");
-      return;
-    }
-
-    const trimmedName = playlistName.trim();
-    if (!trimmedName) {
-      setSaveErrorMessage("Playlist name is required.");
-      return;
-    }
-
-    setIsSavingPlaylist(true);
-    setSaveErrorMessage(null);
-    setSaveResult(null);
-    setSavedPlaylistName("");
-    const savePayload = {
-      name: trimmedName,
+    const result = await save({
+      name: playlistName.trim(),
       description: playlistDescription.trim(),
       isPublic: playlistVisibility === "public",
-      trackUris: tracks.map((track) => track.uri),
-    };
-
-    try {
-      if (process.env.NODE_ENV !== "production") {
-        console.log("[vibe-results] save payload visibility", {
-          isPublic: savePayload.isPublic,
-          isPublicType: typeof savePayload.isPublic,
-        });
-      }
-      const response = await fetch("/api/vibe/save", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(savePayload),
-      });
-
-      if (!response.ok) {
-        const data = (await response.json()) as SavePlaylistApiError;
-        setSaveErrorMessage(data.error ?? "Could not save playlist.");
-        return;
-      }
-
-      const data = (await response.json()) as SavePlaylistApiSuccess;
-      if (process.env.NODE_ENV !== "production") {
-        console.log("[vibe-results] save response visibility", {
-          playlistId: data.playlistId,
-          isPublic: data.isPublic,
-        });
-      }
-      setSaveResult(data);
-      setSavedPlaylistName(data.playlistName || trimmedName);
-      if (data.tracksAdded === false) {
-        setSaveErrorMessage("Playlist created, but tracks failed to add.");
-      }
-      if (latestHistoryId) {
-        attachPlaylistToHistory(latestHistoryId, {
-          id: data.playlistId,
-          url: data.playlistUrl,
-        });
-      }
-      setIsSaveModalOpen(false);
-    } catch {
-      setSaveErrorMessage("Could not save playlist right now.");
-    } finally {
-      setIsSavingPlaylist(false);
-    }
-  };
-
-  const handleCreateAnotherPlaylist = () => {
-    setTracks([]);
-    setLockedTrackIds([]);
-    setLockedTrackCache({});
-    setSaveResult(null);
-    setSavedPlaylistName("");
-    setSaveErrorMessage(null);
-    setLatestHistoryId(null);
-    setErrorMessage(null);
-    setIsSaveModalOpen(false);
-    setPlaylistVisibility("private");
-    setPlaylistName(defaultPlaylistName);
-    setPlaylistDescription(defaultPlaylistDescription);
-    if (requestParse.request) {
-      void fetchResults();
-    }
-  };
-
-  const handleRetryAddTracks = async () => {
-    if (!saveResult) {
-      return;
-    }
-
-    setIsRetryingAddTracks(true);
-    setSaveErrorMessage(null);
-    try {
-      const response = await fetch(`/api/playlists/${saveResult.playlistId}/add-tracks`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          trackUris: tracks.map((track) => track.uri),
-        }),
-      });
-
-      const data = (await response.json()) as
-        | { tracksAddedCount: number; error?: string }
-        | SavePlaylistApiError;
-      if (!response.ok) {
-        setSaveErrorMessage(
-          ("error" in data ? data.error : undefined) ?? "Could not add tracks right now.",
-        );
-        return;
-      }
-
-      setSaveResult((previous) =>
-        previous
-          ? {
-              ...previous,
-              tracksAdded: true,
-              tracksAddedCount:
-                "tracksAddedCount" in data ? data.tracksAddedCount : previous.tracksAddedCount,
-            }
-          : previous,
-      );
-    } catch {
-      setSaveErrorMessage("Could not add tracks right now.");
-    } finally {
-      setIsRetryingAddTracks(false);
-    }
-  };
-
-  useEffect(() => {
-    if (tracks.length === 0) {
-      return;
-    }
-
-    setLockedTrackCache((previous) => {
-      const next = { ...previous };
-      for (const track of tracks) {
-        if (lockedTrackIds.includes(track.id)) {
-          next[track.id] = track;
-        }
-      }
-      return next;
     });
-  }, [lockedTrackIds, tracks]);
+    if (!result) return;
+    setIsSaveModalOpen(false);
+    if (latestHistoryId) {
+      try {
+        attachPlaylistToHistory(latestHistoryId, {
+          id: result.playlistId,
+          url: result.playlistUrl,
+        });
+      } catch {
+        setWarning(
+          "Playlist saved to Spotify. Browser history could not be updated.",
+        );
+      }
+    }
+  };
 
   return (
-    <main className="relative overflow-hidden rounded-3xl border border-zinc-800 bg-zinc-950/90 p-5 shadow-2xl shadow-black/40 sm:p-8">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute -right-28 -top-28 h-64 w-64 rounded-full bg-emerald-500/10 blur-3xl"
-      />
-      <header className="mb-6 space-y-2">
-        <h1 className="text-2xl font-semibold text-zinc-100 sm:text-3xl">Vibe Results</h1>
-        <p className="text-sm text-zinc-400 sm:text-base">
-          Generated tracks from your current vibe settings.
-        </p>
+    <main id="main-content" tabIndex={-1} className="shell page results-page">
+      <header className="page-heading page-heading-row">
+        <div>
+          <span className="eyebrow">MIX STUDIO / YOUR RESULTS</span>
+          <h1>A soundtrack, with your signature.</h1>
+          <p>
+            Keep the tracks you love. Shuffle, refine, and make this mix your
+            own.
+          </p>
+        </div>
       </header>
-
-      {requestParse.error ? (
-        <section className="rounded-xl border border-red-300/30 bg-red-500/10 p-4 text-sm text-red-200">
-          {requestParse.error}
-        </section>
-      ) : null}
-
-      {!requestParse.error && isLoading ? (
-        <section aria-live="polite" aria-busy="true" className="space-y-3">
-          <p className="text-sm text-zinc-400">Generating tracks...</p>
-          <div className="h-16 animate-pulse rounded-xl border border-zinc-800 bg-zinc-900" />
-          <div className="h-16 animate-pulse rounded-xl border border-zinc-800 bg-zinc-900" />
-          <div className="h-16 animate-pulse rounded-xl border border-zinc-800 bg-zinc-900" />
-        </section>
-      ) : null}
-
-      {!requestParse.error && !isLoading && errorMessage ? (
-        <section
-          aria-live="assertive"
-          className="space-y-3 rounded-xl border border-red-300/30 bg-red-500/10 p-4 text-sm text-red-200"
-        >
-          <p>{errorMessage}</p>
-          <button
-            type="button"
-            onClick={() => void fetchResults()}
-            disabled={isLoading}
-            className="rounded-full bg-red-400 px-4 py-2 text-zinc-900 hover:bg-red-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-300 disabled:cursor-not-allowed disabled:opacity-60"
+      <SpotifyConnection
+        returnTo={returnTo}
+        busy={isSavingPlaylist || isLoading}
+      />
+      {requestParse.error && (
+        <div role="alert" className="notice notice-error">
+          {requestParse.error}{" "}
+          <Link className="inline-link" href={`/vibe?${cleanQuery}`}>
+            Edit your settings
+          </Link>
+        </div>
+      )}
+      {searchParams.get("auth_error") && (
+        <p role="alert" className="notice notice-error">
+          Spotify connection was not completed. Your settings and mix are
+          preserved. Connect above to try again.
+        </p>
+      )}
+      {warning && (
+        <p role="status" className="notice">
+          {warning}
+        </p>
+      )}
+      {saveErrorMessage && !isSaveModalOpen && (
+        <p role="alert" className="notice notice-error">
+          {saveErrorMessage}
+        </p>
+      )}
+      {draft?.attempt?.status === "uncertain" && (
+        <p className="notice">
+          <a
+            className="inline-link"
+            href="https://open.spotify.com/collection/playlists"
+            target="_blank"
+            rel="noopener noreferrer"
           >
-            {isLoading ? "Retrying..." : "Retry"}
-          </button>
+            Check your Spotify library <Icon name="external" />
+          </a>
+        </p>
+      )}
+      {draft?.attempt?.recovery && (
+        <p className="notice">
+          <a
+            className="inline-link"
+            href={draft.attempt.recovery.playlistUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Open the existing playlist <Icon name="external" />
+          </a>
+        </p>
+      )}
+      {!requestParse.error && isLoading && <GenerationProgress />}
+      {!requestParse.error && !isLoading && errorMessage && (
+        <section className="notice notice-error" role="alert">
+          <p>{errorMessage}</p>
+          <div className="notice-actions">
+            <button
+              className="button button-secondary button-small"
+              type="button"
+              onClick={() => void fetchResults()}
+            >
+              Retry <Icon name="refresh" width="16" height="16" />
+            </button>
+            <a
+              className="inline-link"
+              href={`/api/auth/reconnect?returnTo=${encodeURIComponent(returnTo)}`}
+            >
+              Reconnect Spotify
+            </a>
+          </div>
         </section>
-      ) : null}
-
-      {!requestParse.error && !isLoading && !errorMessage && tracks.length === 0 ? (
-        <section className="rounded-xl border border-zinc-800 bg-zinc-900/70 p-5 text-sm text-zinc-400">
-          No tracks found for this vibe. Try adjusting genres or mood settings and regenerate.
-        </section>
-      ) : null}
-
-      {!requestParse.error && !isLoading && !errorMessage && tracks.length > 0 ? (
-        <section className="space-y-4">
-          {saveResult ? (
-            <div className="space-y-3 rounded-xl border border-emerald-300/30 bg-emerald-500/10 p-4 text-sm text-emerald-100">
-              <p className="font-semibold">Playlist created successfully.</p>
-              <p>
-                Name: <span className="font-medium">{savedPlaylistName || "Playlist"}</span>
-              </p>
-              <p>
-                Tracks added: {saveResult.tracksAdded ? saveResult.tracksAddedCount : 0}
-              </p>
-              <p>
-                Visibility:{" "}
-                {saveResult.isPublic === true
-                  ? "Public"
-                  : saveResult.isPublic === false
-                    ? "Private"
-                    : "Unknown"}
-              </p>
-              <div className="flex flex-wrap gap-2">
-                <a
-                  href={saveResult.playlistUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex rounded-full bg-zinc-950 px-4 py-2 text-xs font-medium text-emerald-300 hover:bg-black"
-                >
-                  Open in Spotify
-                </a>
-                <button
-                  type="button"
-                  onClick={handleCreateAnotherPlaylist}
-                  className="inline-flex rounded-full border border-emerald-300/30 px-4 py-2 text-xs font-medium text-emerald-100 hover:bg-emerald-400/10"
-                >
-                  Create Another Playlist
-                </button>
-                {!saveResult.tracksAdded ? (
-                  <button
-                    type="button"
-                    onClick={() => void handleRetryAddTracks()}
-                    disabled={isRetryingAddTracks}
-                    className="inline-flex rounded-full bg-amber-400 px-4 py-2 text-xs font-semibold text-zinc-900 hover:bg-amber-300 disabled:opacity-60"
-                  >
-                    {isRetryingAddTracks ? "Retrying..." : "Retry add tracks"}
-                  </button>
-                ) : null}
+      )}
+      {!requestParse.error &&
+        !isLoading &&
+        hydrated &&
+        !errorMessage &&
+        !tracks.length && (
+          <div className="empty-history">
+            <Icon name="music" width="32" height="32" />
+            <h2>Let’s try another direction.</h2>
+            <p>
+              No tracks matched this selection. Change a mood or genre and give
+              it another spin.
+            </p>
+            <Link
+              className="button button-secondary"
+              href={`/vibe?${cleanQuery}`}
+            >
+              Adjust your mix <Icon name="arrow" />
+            </Link>
+          </div>
+        )}
+      {!requestParse.error && tracks.length > 0 && (
+        <section aria-label="Generated playlist" aria-busy={isLoading}>
+          {saveResult && <SaveSuccess result={saveResult} />}
+          <div className="playlist-preview">
+            <div className="playlist-intro">
+              <div className="playlist-cover">
+                <MoodArtwork
+                  mood={
+                    normalizeVibeKey(requestParse.input.vibes[0]) ?? "chill"
+                  }
+                />
               </div>
-              {saveResult.warning ? <p className="text-amber-200">{saveResult.warning}</p> : null}
-              {saveErrorMessage ? <p className="text-amber-200">{saveErrorMessage}</p> : null}
+              <div>
+                <span className="eyebrow">A VIBEPLAY MIX / MADE BY YOU</span>
+                <h2>{saveResult?.playlistName ?? defaultPlaylistName}</h2>
+                <p>
+                  {tracks.length} tracks ·{" "}
+                  {requestParse.input.vibes.join(" + ") ||
+                    requestParse.input.genres.join(" + ")}{" "}
+                  · Spotify
+                </p>
+              </div>
             </div>
-          ) : null}
-
-          <ResultsActionBar
-            trackCount={tracks.length}
-            isBusy={isLoading || isSavingPlaylist || isRetryingAddTracks}
-            onRegenerate={() => void fetchResults()}
-            onShuffle={handleShuffle}
-            onSave={() => {
-              setSaveErrorMessage(null);
-              setIsSaveModalOpen(true);
-            }}
-          />
-
-          <TrackList
-            tracks={tracks}
-            lockedTrackIds={lockedTrackIds}
-            onToggleLock={handleToggleLock}
-            onRemoveTrack={handleRemoveTrack}
-          />
+            <ResultsActionBar
+              trackCount={tracks.length}
+              isBusy={isLoading || isSavingPlaylist}
+              canSave={canSave}
+              canEdit={!draft?.attempt}
+              saveLabel={
+                saveResult
+                  ? "Saved to Spotify"
+                  : draft?.attempt?.status === "uncertain"
+                    ? "Check Spotify library"
+                    : draft?.attempt?.recovery
+                      ? "Finish saving"
+                      : "Save to Spotify"
+              }
+              onRegenerate={() => void fetchResults()}
+              onShuffle={handleShuffle}
+              onSave={handleOpenSaveModal}
+            />
+            <p className="results-hint">
+              <Icon
+                name="lock"
+                width="12"
+                height="12"
+                className="inline-block mr-1"
+              />
+              Lock a track to keep it when you regenerate. Track titles open in
+              Spotify.
+            </p>
+            <TrackList
+              disabled={isLoading || isSavingPlaylist}
+              canRemove={!draft?.attempt}
+              tracks={tracks}
+              lockedTrackIds={lockedTrackIds}
+              onToggleLock={handleToggleLock}
+              onRemoveTrack={handleRemoveTrack}
+            />
+            <div className="playlist-attribution">
+              <span>
+                {lockedTrackIds.length
+                  ? `${lockedTrackIds.length} tracks locked for your next mix`
+                  : "Good music. Your final say."}
+              </span>
+              <a
+                href="https://open.spotify.com"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <SpotifyIcon />
+                Spotify
+              </a>
+            </div>
+          </div>
         </section>
-      ) : null}
-
-      <div className="mt-5">
+      )}
+      <div className="results-bottom">
         <Link
-          href={queryString ? `/vibe?${queryString}` : "/vibe"}
-          className="inline-flex rounded-full border border-zinc-700 bg-zinc-900 px-4 py-2 text-sm font-medium text-zinc-200 hover:bg-zinc-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
+          className="inline-link"
+          href={cleanQuery ? `/vibe?${cleanQuery}` : "/vibe"}
         >
-          Back to Builder
+          <Icon name="sliders" />
+          Back to mix studio
         </Link>
-        <Link
-          href="/vibe/history"
-          className="ml-2 inline-flex rounded-full border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-300 hover:bg-zinc-800"
-        >
-          View History
+        <Link className="inline-link" href="/vibe/history">
+          View History <Icon name="clock" />
         </Link>
       </div>
-
-      {isSaveModalOpen ? (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label="Save playlist to Spotify"
-          className="fixed inset-0 z-30 flex items-end justify-center bg-black/60 p-4 sm:items-center"
-        >
-          <div className="w-full max-w-lg space-y-4 rounded-3xl border border-zinc-800 bg-zinc-950 p-5 shadow-2xl sm:p-6">
-            <div className="space-y-1">
-              <h2 className="text-lg font-semibold text-zinc-100">Save to Spotify</h2>
-              <p className="text-sm text-zinc-400">
-                Edit details before creating the playlist in your account.
-              </p>
-            </div>
-
-            <div className="space-y-2">
-              <label htmlFor="playlist-name" className="text-sm font-medium text-zinc-100">
-                Playlist name
-              </label>
-              <input
-                id="playlist-name"
-                value={playlistName}
-                onChange={(event) => setPlaylistName(event.target.value)}
-                className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-zinc-100"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <label htmlFor="playlist-description" className="text-sm font-medium text-zinc-100">
-                Description
-              </label>
-              <textarea
-                id="playlist-description"
-                value={playlistDescription}
-                onChange={(event) => setPlaylistDescription(event.target.value)}
-                rows={3}
-                className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-zinc-100"
-              />
-            </div>
-
-            <fieldset className="space-y-2">
-              <legend className="text-sm font-medium text-zinc-100">Playlist visibility</legend>
-              <div className="inline-flex rounded-xl border border-zinc-800 bg-zinc-900 p-1">
-                <label className="cursor-pointer">
-                  <input
-                    type="radio"
-                    name="playlist-visibility"
-                    value="private"
-                    checked={playlistVisibility === "private"}
-                    onChange={() => setPlaylistVisibility("private")}
-                    className="sr-only"
-                  />
-                  <span
-                    className={`inline-flex rounded-lg px-3 py-1.5 text-xs font-medium ${
-                      playlistVisibility === "private"
-                        ? "bg-emerald-500 text-zinc-950"
-                        : "text-zinc-300"
-                    }`}
-                  >
-                    Private
-                  </span>
-                </label>
-                <label className="cursor-pointer">
-                  <input
-                    type="radio"
-                    name="playlist-visibility"
-                    value="public"
-                    checked={playlistVisibility === "public"}
-                    onChange={() => setPlaylistVisibility("public")}
-                    className="sr-only"
-                  />
-                  <span
-                    className={`inline-flex rounded-lg px-3 py-1.5 text-xs font-medium ${
-                      playlistVisibility === "public"
-                        ? "bg-emerald-500 text-zinc-950"
-                        : "text-zinc-300"
-                    }`}
-                  >
-                    Public
-                  </span>
-                </label>
-              </div>
-              <p className="text-xs text-zinc-400">Private playlists are only visible to you.</p>
-            </fieldset>
-
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setIsSaveModalOpen(false)}
-                disabled={isSavingPlaylist}
-                className="rounded-full border border-zinc-700 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleSaveToSpotify()}
-                disabled={isSavingPlaylist}
-                className="rounded-full bg-emerald-500 px-4 py-2 text-sm font-semibold text-zinc-950 hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
-              >
-                {isSavingPlaylist ? "Saving..." : "Save Playlist"}
-              </button>
-            </div>
-
-            {isSavingPlaylist ? (
-              <p className="text-sm text-zinc-400">
-                Saving playlist ({tracks.length} tracks)... this may take a few seconds.
-              </p>
-            ) : null}
-
-            {saveErrorMessage ? (
-              <div className="rounded-lg border border-red-300/30 bg-red-500/10 p-3 text-sm text-red-200">
-                <p>{saveErrorMessage}</p>
-                {saveErrorMessage.toLowerCase().includes("reconnect") ? (
-                  <a
-                    href="/api/auth/reconnect"
-                    className="mt-2 inline-block rounded-full bg-red-400 px-4 py-1.5 text-xs font-semibold text-zinc-900 hover:bg-red-300"
-                  >
-                    Reconnect Spotify
-                  </a>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
+      {isSaveModalOpen && (
+        <SavePlaylistDialog
+          name={playlistName}
+          description={playlistDescription}
+          isPublic={playlistVisibility === "public"}
+          trackCount={tracks.length}
+          onNameChange={setPlaylistName}
+          onDescriptionChange={setPlaylistDescription}
+          onPublicChange={(value) =>
+            setPlaylistVisibility(value ? "public" : "private")
+          }
+          onClose={() => setIsSaveModalOpen(false)}
+          onSave={() => void handleSaveToSpotify()}
+          isSaving={isSavingPlaylist}
+          canSave={canSave}
+          locked={Boolean(draft?.attempt && draft.attempt.status !== "failed")}
+          error={saveErrorMessage}
+          reconnectUrl={`/api/auth/reconnect?returnTo=${encodeURIComponent(returnTo)}`}
+        />
+      )}
     </main>
   );
 }
@@ -649,7 +470,10 @@ export default function VibeResultsClient() {
 function mergeLockedTracks(
   incomingTracks: PlaylistGenerationResponse["tracks"],
   lockedTrackIds: string[],
-  lockedTrackCache: Record<string, PlaylistGenerationResponse["tracks"][number]>,
+  lockedTrackCache: Record<
+    string,
+    PlaylistGenerationResponse["tracks"][number]
+  >,
   trackCount: number,
   currentTracks: PlaylistGenerationResponse["tracks"],
 ): PlaylistGenerationResponse["tracks"] {
@@ -657,7 +481,10 @@ function mergeLockedTracks(
     return incomingTracks;
   }
 
-  const latestTrackMap: Record<string, PlaylistGenerationResponse["tracks"][number]> = {
+  const latestTrackMap: Record<
+    string,
+    PlaylistGenerationResponse["tracks"][number]
+  > = {
     ...lockedTrackCache,
   };
   for (const track of currentTracks) {
@@ -688,25 +515,4 @@ function mergeLockedTracks(
   }
 
   return merged.slice(0, trackCount);
-}
-
-function buildDefaultPlaylistName(vibes: string[], targetEnergy: number): string {
-  const primaryVibe = vibes[0] ?? "Vibe";
-  const energyLabel = getEnergyLabel(targetEnergy);
-  const dateLabel = new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-  }).format(new Date());
-
-  return `${primaryVibe} • ${energyLabel} • ${dateLabel}`;
-}
-
-function getEnergyLabel(targetEnergy: number): string {
-  if (targetEnergy >= 67) {
-    return "High Energy";
-  }
-  if (targetEnergy >= 34) {
-    return "Medium Energy";
-  }
-  return "Low Energy";
 }

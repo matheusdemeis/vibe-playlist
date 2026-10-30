@@ -1,48 +1,62 @@
 "use client";
 
+import { Icon, SpotifyIcon } from "@/components/ui/Icon";
+
 type ResultsActionBarProps = {
   trackCount: number;
   isBusy: boolean;
+  canSave?: boolean;
+  canEdit?: boolean;
+  saveLabel?: string;
   onRegenerate: () => void;
   onShuffle: () => void;
   onSave: () => void;
 };
 
-// Presentational only: keep Spotify API/network calls in server routes.
 export function ResultsActionBar({
   trackCount,
   isBusy,
+  canSave = true,
+  canEdit = true,
+  saveLabel = "Save to Spotify",
   onRegenerate,
   onShuffle,
   onSave,
 }: ResultsActionBarProps) {
   return (
-    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-      <p className="text-sm text-zinc-400">Generated {trackCount} tracks.</p>
-      <div className="flex flex-wrap gap-2">
+    <div className="playlist-toolbar">
+      <p>{trackCount} tracks in your mix</p>
+      <div className="toolbar-buttons">
         <button
+          className="button button-secondary button-small"
           type="button"
           onClick={onRegenerate}
           disabled={isBusy}
-          className="rounded-full border border-zinc-700 bg-zinc-900 px-4 py-2 text-xs font-medium text-zinc-200 transition-colors hover:bg-zinc-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
         >
+          <Icon name="refresh" width="16" height="16" />
           Regenerate
         </button>
         <button
+          className="button button-secondary button-small"
           type="button"
           onClick={onShuffle}
-          disabled={isBusy}
-          className="rounded-full border border-zinc-700 bg-zinc-900 px-4 py-2 text-xs font-medium text-zinc-200 transition-colors hover:bg-zinc-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
+          disabled={isBusy || !canEdit}
         >
+          <Icon name="shuffle" width="16" height="16" />
           Shuffle Order
         </button>
         <button
+          className="button button-primary button-small"
           type="button"
-          onClick={onSave}
-          disabled={isBusy}
-          className="rounded-full bg-emerald-500 px-4 py-2 text-xs font-semibold text-zinc-950 transition-colors hover:bg-emerald-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-300 disabled:cursor-not-allowed disabled:opacity-60"
+          onClick={(event) => {
+            // Let the dialog restore focus to its launcher in WebKit too.
+            event.currentTarget.focus();
+            onSave();
+          }}
+          disabled={isBusy || !canSave || trackCount === 0}
         >
-          {isBusy ? "Please wait..." : "Save to Spotify"}
+          <SpotifyIcon />
+          {isBusy ? "Please wait…" : saveLabel}
         </button>
       </div>
     </div>

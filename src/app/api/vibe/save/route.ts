@@ -1,204 +1,56 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  PlaylistSaveError,
-  savePlaylistToSpotify,
-  type SavePlaylistResult,
-} from "../../../../lib/playlist/save";
-import {
-  getRequiredPlaylistModifyScope,
-  getSpotifySession,
-  hasGrantedScopes,
-} from "../../../../lib/auth/spotify-session";
-import { spotifyJson, SpotifyClientError } from "../../../../lib/spotify/client";
+import { PlaylistSaveError, savePlaylistToSpotify, buildTrackUris } from "../../../../lib/playlist/save";
+import { clearSpotifySession, getRequiredPlaylistModifyScope, getSpotifySession, hasGrantedScopes } from "../../../../lib/auth/spotify-session";
+import { getSpotifyFailure } from "../../../../lib/spotify/error";
+import { privateHeaders, rejectCrossOrigin } from "../../../../lib/server/request";
 
-type SavePlaylistRequestBody = {
-  name?: unknown;
-  description?: unknown;
-  isPublic?: unknown;
-  trackUris?: unknown;
-};
-
-type SavePlaylistApiError = {
-  error: string;
-  code: string;
-  details?: Record<string, unknown>;
-};
-
-type SavePlaylistApiResponse = SavePlaylistResult | SavePlaylistApiError;
+type ValidSavePayload = { name: string; description: string; isPublic: boolean; trackUris: string[]; draftId?: string; recoveryToken?: string };
 
 export async function POST(request: NextRequest) {
-  const { accessToken, grantedScopes } = await getSpotifySession();
-
-  if (!accessToken) {
-    return NextResponse.json<SavePlaylistApiResponse>(
-      { error: "You are not connected to Spotify. Please log in first.", code: "not_authenticated" },
-      { status: 401 },
-    );
-  }
-
-  // Pre-flight: verify token is valid for this Spotify app before doing any playlist work.
+  const rejected = rejectCrossOrigin(request);
+  if (rejected) return rejected;
+  let savingStarted = false;
   try {
-    await spotifyJson<{ id: string }>({ method: "GET", path: "/me", accessToken });
-  } catch (preflightError) {
-    if (preflightError instanceof SpotifyClientError) {
-      const isForbidden = preflightError.status === 403;
-      console.error("[save-route] /me preflight failed", {
-        status: preflightError.status,
-        tokenTail: accessToken.slice(-6),
-        body: preflightError.bodyText,
-      });
-      return NextResponse.json<SavePlaylistApiResponse>(
-        {
-          error: isForbidden
-            ? "Spotify returned 403 on /me. If your Spotify app is in Development Mode, add your account at developer.spotify.com \u2192 App \u2192 User Management, then reconnect."
-            : "Spotify token is invalid. Please reconnect.",
-          code: isForbidden ? "spotify_dev_mode_forbidden" : "not_authenticated",
-        },
-        { status: preflightError.status },
-      );
+    let body: unknown;
+    try { body = await request.json(); } catch {
+      return NextResponse.json({ error: "Invalid JSON payload.", code: "invalid_json", retrySafe: true }, { status: 400 });
     }
-    throw preflightError;
-  }
-  let body: SavePlaylistRequestBody;
-  try {
-    body = (await request.json()) as SavePlaylistRequestBody;
-  } catch {
-    return NextResponse.json<SavePlaylistApiResponse>(
-      { error: "Invalid JSON payload.", code: "invalid_json" },
-      { status: 400 },
-    );
-  }
-
-  const parseResult = validateSavePayload(body);
-  if (!parseResult.ok) {
-    return NextResponse.json<SavePlaylistApiResponse>(
-      { error: parseResult.error, code: "invalid_request" },
-      { status: 400 },
-    );
-  }
-  traceSave("received_public_flag", {
-    rawIsPublic: body.isPublic,
-    rawIsPublicType: typeof body.isPublic,
-    normalized: parseResult.value.isPublic,
-  });
-  const requiredScope = getRequiredPlaylistModifyScope(parseResult.value.isPublic);
-  const hasRequiredScope = hasGrantedScopes(grantedScopes, [requiredScope]);
-  traceSave("playlist_scope_check", {
-    grantedScopes,
-    requiredScope,
-    hasRequiredScope,
-  });
-  if (!hasRequiredScope) {
-    return NextResponse.json<SavePlaylistApiResponse>(
-      {
-        error: "Reconnect to grant playlist permissions",
-        code: "missing_scopes",
-      },
-      { status: 403 },
-    );
-  }
-
-  try {
-    const result = await savePlaylistToSpotify({
-      accessToken,
-      grantedScopes,
-      name: parseResult.value.name,
-      description: parseResult.value.description,
-      isPublic: parseResult.value.isPublic,
-      trackUris: parseResult.value.trackUris,
-    });
-    return NextResponse.json({
-      playlistName: result.playlistName,
-      playlistId: result.playlistId,
-      playlistUrl: result.playlistUrl,
-      isPublic: result.isPublic,
-      snapshotId: null,
-      tracksAddedCount: result.tracksAddedCount,
-      tracksAdded: result.tracksAddedCount > 0,
-      visibility: {
-        requested: parseResult.value.isPublic,
-        final: result.isPublic,
-      },
-    });
+    const parsed = validateSavePayload(body);
+    if (!parsed.ok) return NextResponse.json({ error: parsed.error, code: "invalid_request", retrySafe: true }, { status: 400 });
+    const { accessToken, grantedScopes } = await getSpotifySession();
+    if (!accessToken) return NextResponse.json({ error: "Connect Spotify before saving.", code: "not_authenticated", retrySafe: true }, { status: 401 });
+    const scopes = [getRequiredPlaylistModifyScope(parsed.value.isPublic), "playlist-read-private"];
+    if (!hasGrantedScopes(grantedScopes, scopes)) {
+      return NextResponse.json({ error: "Reconnect Spotify to grant playlist permissions.", code: "missing_scopes", retrySafe: true }, { status: 403 });
+    }
+    savingStarted = true;
+    const result = await savePlaylistToSpotify({ ...parsed.value, accessToken, grantedScopes });
+    return NextResponse.json({ ...result, tracksAdded: result.tracksAddedCount > 0,
+      visibility: { requested: parsed.value.isPublic, final: result.isPublic } }, { headers: privateHeaders() });
   } catch (error) {
-    if (error instanceof PlaylistSaveError) {
-      const isOwnerMismatch = error.code === "playlist_owner_mismatch";
-      const isAddTracksFailure = error.code === "spotify_add_tracks_failed";
-      const isDevModeForbidden = error.code === "spotify_dev_mode_forbidden" || error.code === "spotify_me_failed";
-      const shouldReconnect =
-        error.status === 403 &&
-        !isOwnerMismatch &&
-        !isAddTracksFailure &&
-        !isDevModeForbidden;
-      return NextResponse.json<SavePlaylistApiResponse>(
-        {
-          error: isOwnerMismatch
-            ? "Connected Spotify account does not own this playlist. Reconnect and try again."
-            : isDevModeForbidden || !shouldReconnect
-              ? error.message
-              : "Reconnect to grant playlist permissions",
-          code: isOwnerMismatch ? "playlist_owner_mismatch" : isDevModeForbidden ? error.code : shouldReconnect ? "missing_scopes" : error.code,
-          details: isAddTracksFailure
-            ? {
-                ...error.details,
-                endpoint: error.endpoint,
-                spotifyBody: error.body,
-              }
-            : error.details,
-        },
-        { status: error.status },
-      );
-    }
-
-    return NextResponse.json<SavePlaylistApiResponse>(
-      { error: "Could not save playlist right now.", code: "playlist_save_failed" },
-      { status: 502 },
-    );
+    const failure = error instanceof PlaylistSaveError ? error : getSpotifyFailure(error);
+    if (failure.status === 401) await clearSpotifySession();
+    return NextResponse.json({ error: failure.message, code: failure.code,
+      retryAfterSeconds: failure.retryAfterSeconds,
+      retrySafe: error instanceof PlaylistSaveError ? error.retrySafe : !savingStarted,
+      ...(error instanceof PlaylistSaveError && error.recovery ? { recovery: error.recovery } : {}) },
+    { status: failure.status, headers: privateHeaders(failure.retryAfterSeconds) });
   }
 }
 
-export function validateSavePayload(payload: SavePlaylistRequestBody):
-  | { ok: true; value: { name: string; description: string; isPublic: boolean; trackUris: string[] } }
-  | { ok: false; error: string } {
-  const name = typeof payload.name === "string" ? payload.name.trim() : "";
-  const description = typeof payload.description === "string" ? payload.description.trim() : "";
-  const isPublic = typeof payload.isPublic === "boolean" ? payload.isPublic : false;
-  const trackUris = parseStringArray(payload.trackUris);
-
-  if (!name) {
-    return { ok: false, error: "Playlist name is required." };
-  }
-
-  if (trackUris.length < 1 || trackUris.length > 300) {
-    return { ok: false, error: "Track URIs must contain between 1 and 300 items." };
-  }
-
-  return {
-    ok: true,
-    value: {
-      name,
-      description,
-      isPublic,
-      trackUris,
-    },
-  };
-}
-
-function parseStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value
-    .filter((item): item is string => typeof item === "string")
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function traceSave(event: string, payload: Record<string, unknown>): void {
-  if (process.env.NODE_ENV === "production") {
-    return;
-  }
-
-  console.log(`[TRACE][save] ${event}`, payload);
+export function validateSavePayload(payload: unknown): { ok: true; value: ValidSavePayload } | { ok: false; error: string } {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return { ok: false, error: "Request body must be a JSON object." };
+  const body = payload as Record<string, unknown>;
+  const name = typeof body.name === "string" ? body.name.trim() : "";
+  if (!name || name.length > 100) return { ok: false, error: "Playlist name is required and must be at most 100 characters." };
+  if (body.description !== undefined && typeof body.description !== "string") return { ok: false, error: "Description must be text." };
+  const description = typeof body.description === "string" ? body.description.trim() : "";
+  if (description.length > 300) return { ok: false, error: "Description must be at most 300 characters." };
+  if (body.isPublic !== undefined && typeof body.isPublic !== "boolean") return { ok: false, error: "Playlist visibility must be a boolean." };
+  if (!Array.isArray(body.trackUris) || body.trackUris.length < 1 || body.trackUris.length > 300) return { ok: false, error: "Track URIs must contain between 1 and 300 items." };
+  if (!body.trackUris.every((uri) => typeof uri === "string" && /^spotify:track:[A-Za-z0-9]{22}$/.test(uri))) return { ok: false, error: "Every track must have a valid Spotify track URI." };
+  if (body.draftId !== undefined && (typeof body.draftId !== "string" || !/^[a-f0-9-]{36}$/i.test(body.draftId))) return { ok: false, error: "Invalid playlist draft." };
+  if (body.recoveryToken !== undefined && (typeof body.recoveryToken !== "string" || body.recoveryToken.length > 2000 || !body.recoveryToken)) return { ok: false, error: "Invalid playlist recovery token." };
+  return { ok: true, value: { name, description, isPublic: body.isPublic === true, trackUris: buildTrackUris(body.trackUris as string[]),
+    draftId: body.draftId as string | undefined, recoveryToken: body.recoveryToken as string | undefined } };
 }

@@ -85,7 +85,15 @@ describe("vibe storage helpers", () => {
       storage,
     );
 
-    attachPlaylistToHistory(entry.id, { id: "playlist-123", url: "https://open.spotify.com/..." }, storage);
+    attachPlaylistToHistory(entry.id, { id: "playlist-123", url: "https://open.spotify.com/playlist/playlist-123" }, storage);
     expect(listHistory(storage)[0]?.playlist?.id).toBe("playlist-123");
+  });
+});
+
+describe("malformed stored data", () => {
+  it("ignores array entries that cannot be safely rendered", () => {
+    const storage = { getItem: () => JSON.stringify([null, {}, { id: "bad", settings: null }]), setItem: () => {} };
+    expect(listPresets(storage)).toEqual([]);
+    expect(listHistory(storage)).toEqual([]);
   });
 });

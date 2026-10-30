@@ -1,74 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
-import { formatSpotifyApiErrorMessage } from "@/lib/spotify/error";
-import { SpotifyClientError, spotifyRequest } from "@/lib/spotify/client";
-import { getSpotifySession } from "@/lib/auth/spotify-session";
-
-const DEFAULT_TRACK_LIMIT = 25;
-
-type SearchTracksRequestBody = {
-  query?: string;
-};
-
-type SpotifyTrackSearchResponse = {
-  tracks: {
-    items: Array<{
-      id: string;
-      name: string;
-      uri: string;
-      artists: Array<{ name: string }>;
-    }>;
-  };
-};
+import { clearSpotifySession, getSpotifySession } from "../../../../lib/auth/spotify-session";
+import { CatalogSearchError, isRecord, searchCatalogTracks } from "../../../../lib/spotify/catalog";
+import { getSpotifyFailure } from "../../../../lib/spotify/error";
+import { privateHeaders } from "../../../../lib/server/request";
 
 export async function POST(request: NextRequest) {
-  const { accessToken } = await getSpotifySession();
-  if (!accessToken) {
-    return NextResponse.json(
-      { error: "You are not connected to Spotify. Please log in first." },
-      { status: 401 },
-    );
-  }
-
-  const body = (await request.json()) as SearchTracksRequestBody;
-  const query = body.query?.trim();
-  if (!query) {
-    return NextResponse.json({ error: "Query is required." }, { status: 400 });
-  }
-
-  let data: SpotifyTrackSearchResponse;
   try {
-    data = await spotifyRequest<SpotifyTrackSearchResponse>({
-      method: "GET",
-      path: "/search",
-      accessToken,
-      query: {
-        q: query,
-        type: "track",
-        limit: DEFAULT_TRACK_LIMIT,
-      },
-    });
-  } catch (error) {
-    if (!(error instanceof SpotifyClientError)) {
-      return NextResponse.json({ error: "Failed to reach Spotify API." }, { status: 502 });
+    const { accessToken } = await getSpotifySession();
+    if (!accessToken) return NextResponse.json({ error: "Connect Spotify to search tracks.", code: "not_authenticated" }, { status: 401 });
+    const body: unknown = await request.json().catch(() => null);
+    if (!isRecord(body) || typeof body.query !== "string" || body.query.trim().length < 2 || body.query.length > 150) {
+      return NextResponse.json({ error: "Enter between 2 and 150 characters to search.", code: "invalid_request" }, { status: 400 });
     }
-    return NextResponse.json(
-      {
-        error: formatSpotifyApiErrorMessage(
-          error.status,
-          error.bodyText,
-          error.responseHeaders,
-        ),
-      },
-      { status: error.status },
-    );
+    const tracks = await searchCatalogTracks(accessToken, { queries: [body.query.trim()], targetCount: 10, maxRequests: 1 });
+    return NextResponse.json({ tracks: tracks.map((track) => ({ id: track.id, name: track.name, uri: track.uri, artists: track.artists.map((artist) => artist.name) })) }, { headers: privateHeaders() });
+  } catch (error) {
+    const failure = error instanceof CatalogSearchError ? error : getSpotifyFailure(error);
+    if (failure.status === 401) await clearSpotifySession();
+    const retryAfterSeconds = "retryAfterSeconds" in failure ? failure.retryAfterSeconds : undefined;
+    return NextResponse.json({ error: failure.message, code: failure.code, retryAfterSeconds }, { status: failure.status, headers: privateHeaders(retryAfterSeconds) });
   }
-
-  return NextResponse.json({
-    tracks: data.tracks.items.map((track) => ({
-      id: track.id,
-      name: track.name,
-      uri: track.uri,
-      artists: track.artists.map((artist) => artist.name),
-    })),
-  });
 }

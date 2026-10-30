@@ -1,13 +1,25 @@
+import { selectCatalogTracks } from "./catalog-selection";
 import type { TempoOption } from "@/lib/vibe-builder";
-import { formatSpotifyApiErrorMessage } from "../spotify/error";
+import { spotifyRequest } from "../spotify/client";
+import {
+  CatalogSearchError, normalizeCatalogTrack, quoteSearchValue, searchCatalogTracks,
+  type CatalogTrack,
+} from "../spotify/catalog";
+import { VIBE_CONFIG } from "../vibes";
 
 const TEMPO_TARGETS: Record<TempoOption, number> = {
   Slow: 80,
   Medium: 115,
   Fast: 140,
 };
-const SPOTIFY_API_BASE_URL = "https://api.spotify.com/v1";
 const DEFAULT_MAX_TRACKS_PER_ARTIST = 2;
+
+export const CATALOG_MOOD_GENRES: Record<string, readonly string[]> = {
+  ...Object.fromEntries(Object.entries(VIBE_CONFIG).map(([mood, config]) => [mood, config.seedGenres])),
+  focus: ["ambient", "classical", "jazz"],
+  sad: ["acoustic", "indie", "singer-songwriter"],
+  happy: ["pop", "dance", "soul"],
+};
 
 export type VibeRecommendationInput = {
   seedGenres: string[];
@@ -16,6 +28,8 @@ export type VibeRecommendationInput = {
   tempo?: TempoOption;
   trackCount: number;
   referenceTrackIds?: string[];
+  vibes?: string[];
+  includeExplicit?: boolean;
 };
 
 export type SpotifyRecommendationParams = {
@@ -43,20 +57,6 @@ export type SpotifyRecommendationTrack = SpotifyTrack & {
   };
 };
 
-type SpotifyRecommendationsResponse = {
-  tracks: SpotifyRecommendationTrack[];
-};
-
-type SpotifyAudioFeature = {
-  id: string;
-  energy: number | null;
-  valence: number | null;
-};
-
-type SpotifyAudioFeaturesResponse = {
-  audio_features: Array<SpotifyAudioFeature | null>;
-};
-
 export type RankedTrack = {
   id: string;
   name: string;
@@ -70,7 +70,10 @@ export type RankedTrack = {
 
 export type PlaylistGenerationResponse = {
   tracks: RankedTrack[];
+  warning?: string;
   metadata: {
+    strategy: "catalog_search";
+    queries: string[];
     usedSeeds: {
       seed_genres: string[];
       seed_tracks: string[];
@@ -84,8 +87,6 @@ export type GeneratePlaylistTracksInput = VibeRecommendationInput & {
   preferPreviews?: boolean;
   maxTracksPerArtist?: number;
 };
-
-type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
 export class PlaylistGenerationError extends Error {
   status: number;
@@ -180,168 +181,62 @@ export function limitTracksPerArtist<T extends SpotifyTrack>(
 export async function generatePlaylistTracks(
   accessToken: string,
   input: GeneratePlaylistTracksInput,
-  fetcher: FetchLike = fetch,
+  fetcher: typeof fetch = fetch,
 ): Promise<PlaylistGenerationResponse> {
   const params = mapVibeToRecommendationParams(input);
-  if (params.seed_genres.length === 0 && (!params.seed_tracks || params.seed_tracks.length === 0)) {
-    throw new PlaylistGenerationError(
-      "At least one seed genre or seed track is required.",
-      400,
-      "missing_seeds",
-    );
+  const moodGenres = (input.vibes ?? []).flatMap((mood) => {
+    const key = mood.toLowerCase().replace(/\s+/g, "");
+    return Object.prototype.hasOwnProperty.call(CATALOG_MOOD_GENRES, key) ? CATALOG_MOOD_GENRES[key] : [];
+  });
+  // Give explicit genre choices and mood presets space within the query budget.
+  const genreChoices = uniqueNonEmpty(input.seedGenres);
+  const genres = uniqueNonEmpty(Array.from({ length: Math.max(genreChoices.length, moodGenres.length) }, (_, index) =>
+    [genreChoices[index], moodGenres[index]].filter((genre): genre is string => Boolean(genre))).flat()).slice(0, 10);
+  const references: CatalogTrack[] = [];
+  for (const id of params.seed_tracks ?? []) {
+    const data = await spotifyRequest<unknown>({ path: "/tracks/" + encodeURIComponent(id), accessToken, fetcher });
+    const track = normalizeCatalogTrack(data);
+    if (!track) throw new CatalogSearchError("Spotify returned an unreadable reference track. Please try again.");
+    references.push(track);
   }
-
-  const recommendationTracks = await fetchRecommendations(accessToken, params, fetcher);
-
-  const dedupedTracks = dedupeTracksById(recommendationTracks);
-  const sortedTracks = await sortTracksByPreference(
-    dedupedTracks,
-    params,
-    Boolean(input.preferPreviews),
-    accessToken,
-    fetcher,
-  );
-  const limitedTracks = limitTracksPerArtist(
-    sortedTracks,
-    input.maxTracksPerArtist ?? DEFAULT_MAX_TRACKS_PER_ARTIST,
-    params.limit,
-  );
-
+  const artists = [...new Map(references.flatMap((track) => track.artists).map((artist) => [artist.id, artist])).values()].slice(0, 5);
+  // Rotate artists within each genre so a ten-query budget represents every
+  // reference artist, rather than exhausting it on the first artist's genres.
+  const queries = (artists.length
+    ? (genres.length ? genres : [null]).flatMap((genre) => artists.map((artist) =>
+      "artist:" + quoteSearchValue(artist.name) + (genre ? " genre:" + quoteSearchValue(genre) : "")))
+    : genres.map((genre) => "genre:" + quoteSearchValue(genre))).slice(0, 10);
+  const requiredArtistIdsByQuery = Object.fromEntries(queries.map((query) => [query,
+    artists.filter((artist) => query.startsWith("artist:" + quoteSearchValue(artist.name))).map((artist) => artist.id)]));
+  if (queries.length === 0) {
+    throw new PlaylistGenerationError("Select at least one mood, genre, or reference track.", 400, "missing_seeds");
+  }
+  const catalogTracks = await searchCatalogTracks(accessToken, {
+    queries, requiredArtistIdsByQuery, targetCount: Math.min(200, params.limit * 2), includeExplicit: input.includeExplicit, fetcher,
+  });
+  const sortedTracks = input.preferPreviews
+    ? [...catalogTracks].sort((left, right) => Number(Boolean(right.preview_url)) - Number(Boolean(left.preview_url)))
+    : catalogTracks;
+  const tracks = selectCatalogTracks(
+    sortedTracks, params.limit, input.maxTracksPerArtist ?? DEFAULT_MAX_TRACKS_PER_ARTIST,
+  ).map(formatRankedTrack);
+  const countWarning = tracks.length === 0
+    ? "No catalog matches found. Try different moods, genres, or reference tracks. "
+    : tracks.length < params.limit ? "Found " + tracks.length + " matching tracks; broaden your preferences for more. " : "";
   return {
-    tracks: limitedTracks.map(formatRankedTrack),
+    tracks,
+    warning: countWarning + "Moods use genre presets in Spotify catalog search. Energy, happiness, and tempo targets are unavailable and are not applied.",
     metadata: {
-      usedSeeds: {
-        seed_genres: params.seed_genres,
-        seed_tracks: params.seed_tracks ?? [],
-      },
+      strategy: "catalog_search",
+      queries: queries.slice(0, 10),
+      usedSeeds: { seed_genres: genres.filter((genre) => queries.some((query) => query.endsWith("genre:" + quoteSearchValue(genre)))), seed_tracks: params.seed_tracks ?? [] },
       params,
       generatedAt: new Date().toISOString(),
     },
   };
 }
 
-async function fetchRecommendations(
-  accessToken: string,
-  params: SpotifyRecommendationParams,
-  fetcher: FetchLike,
-): Promise<SpotifyRecommendationTrack[]> {
-  const queryParams = new URLSearchParams({
-    limit: String(params.limit),
-    seed_genres: params.seed_genres.join(","),
-    target_energy: String(params.target_energy),
-    target_valence: String(params.target_valence),
-  });
-
-  if (params.seed_tracks && params.seed_tracks.length > 0) {
-    queryParams.set("seed_tracks", params.seed_tracks.join(","));
-  }
-
-  if (params.target_tempo !== undefined) {
-    queryParams.set("target_tempo", String(params.target_tempo));
-  }
-
-  const response = await fetcher(`${SPOTIFY_API_BASE_URL}/recommendations?${queryParams.toString()}`, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new PlaylistGenerationError(
-      formatSpotifyApiErrorMessage(response.status, errorText, response.headers),
-      response.status === 401 ? 401 : 502,
-      "spotify_recommendations_failed",
-    );
-  }
-
-  const data = (await response.json()) as SpotifyRecommendationsResponse;
-  return data.tracks;
-}
-
-async function sortTracksByPreference(
-  tracks: SpotifyRecommendationTrack[],
-  params: SpotifyRecommendationParams,
-  preferPreviews: boolean,
-  accessToken: string,
-  fetcher: FetchLike,
-): Promise<SpotifyRecommendationTrack[]> {
-  const features = await fetchAudioFeatures(accessToken, tracks, fetcher);
-  const hasScoringData = features.size > 0;
-
-  if (!preferPreviews && !hasScoringData) {
-    return tracks;
-  }
-
-  const decorated = tracks.map((track, index) => {
-    const feature = features.get(track.id);
-    const score = feature
-      ? Math.abs((feature.energy ?? params.target_energy) - params.target_energy) +
-        Math.abs((feature.valence ?? params.target_valence) - params.target_valence)
-      : Number.POSITIVE_INFINITY;
-
-    return {
-      track,
-      index,
-      hasPreview: Boolean(track.preview_url),
-      score,
-    };
-  });
-
-  decorated.sort((left, right) => {
-    if (preferPreviews && left.hasPreview !== right.hasPreview) {
-      return left.hasPreview ? -1 : 1;
-    }
-
-    if (hasScoringData && left.score !== right.score) {
-      return left.score - right.score;
-    }
-
-    return left.index - right.index;
-  });
-
-  return decorated.map((item) => item.track);
-}
-
-async function fetchAudioFeatures(
-  accessToken: string,
-  tracks: SpotifyRecommendationTrack[],
-  fetcher: FetchLike,
-): Promise<Map<string, SpotifyAudioFeature>> {
-  if (tracks.length === 0) {
-    return new Map<string, SpotifyAudioFeature>();
-  }
-
-  const ids = tracks.map((track) => track.id).join(",");
-  const response = await fetcher(`${SPOTIFY_API_BASE_URL}/audio-features?ids=${ids}`, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
-  });
-
-  if (!response.ok) {
-    return new Map<string, SpotifyAudioFeature>();
-  }
-
-  const data = (await response.json()) as SpotifyAudioFeaturesResponse;
-  const result = new Map<string, SpotifyAudioFeature>();
-
-  for (const feature of data.audio_features) {
-    if (!feature?.id) {
-      continue;
-    }
-
-    if (feature.energy === null || feature.valence === null) {
-      continue;
-    }
-
-    result.set(feature.id, feature);
-  }
-
-  return result;
-}
-
-function formatRankedTrack(track: SpotifyRecommendationTrack): RankedTrack {
+function formatRankedTrack(track: CatalogTrack): RankedTrack {
   return {
     id: track.id,
     name: track.name,

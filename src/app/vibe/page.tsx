@@ -1,54 +1,59 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { Icon } from "@/components/ui/Icon";
+import { SpotifyConnection } from "@/components/vibe/ConnectionCard";
 import {
   CURATED_GENRES,
-  DEFAULT_VIBE_INPUT,
-  TEMPO_OPTIONS,
+  readVibeBuilderQuery,
   TRACK_COUNT_OPTIONS,
   VIBE_PRESETS,
   validateVibeBuilderInput,
-  type TempoOption,
   type VibeBuilderInput,
 } from "@/lib/vibe-builder";
-import { deletePreset, listPresets, savePreset, type Preset } from "@/lib/storage/vibe-data";
-
-function readStateFromQuery(): VibeBuilderInput {
-  if (typeof window === "undefined") {
-    return DEFAULT_VIBE_INPUT;
-  }
-
-  const params = new URLSearchParams(window.location.search);
-  const vibes = params.get("vibes")?.split(",").filter(Boolean) ?? [];
-  const genres = params.get("genres")?.split(",").filter(Boolean) ?? [];
-  const energy = Number(params.get("energy"));
-  const valence = Number(params.get("valence"));
-  const tempo = params.get("tempo");
-  const trackCount = Number(params.get("trackCount"));
-  const explicit = params.get("explicit");
-
-  return {
-    vibes,
-    genres,
-    energy: Number.isFinite(energy) ? energy : DEFAULT_VIBE_INPUT.energy,
-    valence: Number.isFinite(valence) ? valence : DEFAULT_VIBE_INPUT.valence,
-    tempo:
-      TEMPO_OPTIONS.includes(tempo as TempoOption)
-        ? (tempo as TempoOption)
-        : DEFAULT_VIBE_INPUT.tempo,
-    trackCount: TRACK_COUNT_OPTIONS.includes(trackCount as 20 | 30 | 50)
-      ? (trackCount as 20 | 30 | 50)
-      : DEFAULT_VIBE_INPUT.trackCount,
-    explicit: explicit === null ? DEFAULT_VIBE_INPUT.explicit : explicit === "true",
-  };
-}
+import {
+  deletePreset,
+  listPresets,
+  savePreset,
+  type Preset,
+} from "@/lib/storage/vibe-data";
 
 export default function VibePage() {
-  const [state, setState] = useState<VibeBuilderInput>(() => readStateFromQuery());
-  const [presetName, setPresetName] = useState("");
-  const [presets, setPresets] = useState<Preset[]>(() =>
-    typeof window === "undefined" ? [] : listPresets(),
+  return (
+    <Suspense
+      fallback={
+        <main id="main-content" className="shell page">
+          <p role="status">Opening your studio…</p>
+        </main>
+      }
+    >
+      <VibeBuilder />
+    </Suspense>
   );
+}
+
+function VibeBuilder() {
+  const params = useSearchParams();
+  const router = useRouter();
+  const [authMessage] = useState(() =>
+    params.has("auth_error")
+      ? "Spotify connection was not completed. Your mix settings are preserved; connect above to try again."
+      : null,
+  );
+  const [state, setState] = useState<VibeBuilderInput>(() =>
+    readVibeBuilderQuery(new URLSearchParams(params.toString())),
+  );
+  const [presetName, setPresetName] = useState("");
+  const [presets, setPresets] = useState<Preset[]>([]);
+  const [presetMessage, setPresetMessage] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  useEffect(() => {
+    // Presets are browser-only; hydrate after SSR to keep the initial markup consistent.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPresets(listPresets());
+  }, []);
   const [presetError, setPresetError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -96,18 +101,29 @@ export default function VibePage() {
       setPresets(listPresets());
       setPresetName("");
       setPresetError(null);
+      setPresetMessage(`“${name}” is saved in your presets.`);
     } catch (error) {
-      setPresetError(error instanceof Error ? error.message : "Could not save preset.");
+      setPresetError(
+        error instanceof Error ? error.message : "Could not save preset.",
+      );
     }
   };
 
   const handleApplyPreset = (preset: Preset) => {
     setState(preset.settings);
+    setPresetMessage(`“${preset.name}” applied to your mix.`);
+    setFormError(null);
   };
 
   const handleDeletePreset = (presetId: string) => {
-    deletePreset(presetId);
-    setPresets(listPresets());
+    try {
+      deletePreset(presetId);
+      setPresets(listPresets());
+    } catch {
+      setPresetError(
+        "Could not update presets. Check your browser storage settings.",
+      );
+    }
   };
 
   const resultQuery = useMemo(() => {
@@ -123,219 +139,237 @@ export default function VibePage() {
   }, [state]);
 
   return (
-    <main className="rounded-2xl bg-white p-5 shadow-sm sm:p-8">
-      <header className="mb-6 space-y-2">
-        <h1 className="text-2xl font-semibold text-zinc-900 sm:text-3xl">Vibe Builder</h1>
-        <p className="text-sm text-zinc-600 sm:text-base">
-          Build your playlist intent and prepare a request for generation.
+    <main id="main-content" tabIndex={-1} className="shell page">
+      <header className="page-heading">
+        <span className="eyebrow">A LITTLE MORE ROOM TO PLAY</span>
+        <h1>Welcome to your mix studio.</h1>
+        <p>
+          Blend moods, explore genres, and save the combinations you come back
+          to.
         </p>
       </header>
-
-      <section className="space-y-7">
-        <div className="space-y-3 rounded-xl border border-zinc-200 p-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-medium text-zinc-900">Saved Presets</h2>
-            <span className="text-xs text-zinc-500">{presets.length}/20</span>
-          </div>
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <input
-              value={presetName}
-              onChange={(event) => setPresetName(event.target.value)}
-              placeholder="Preset name"
-              className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm text-zinc-900"
-            />
-            <button
-              type="button"
-              onClick={handleSavePreset}
-              className="rounded-full bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700"
-            >
-              Save Preset
-            </button>
-          </div>
-          {presetError ? <p className="text-xs text-red-700">{presetError}</p> : null}
-
-          {presets.length > 0 ? (
-            <ul className="space-y-2">
-              {presets.map((preset) => (
-                <li
-                  key={preset.id}
-                  className="flex flex-col gap-2 rounded-lg border border-zinc-200 p-3 sm:flex-row sm:items-center sm:justify-between"
+      <SpotifyConnection returnTo={`/vibe?${resultQuery}`} />
+      {authMessage && (
+        <p role="status" className="notice">
+          {authMessage}
+        </p>
+      )}
+      <div className="workspace studio-workspace">
+        <form
+          className="panel studio-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const validation = validateVibeBuilderInput(state);
+            if (!validation.isValid) {
+              setFormError(validation.errors[0]);
+              return;
+            }
+            router.push(`/vibe/results?${resultQuery}`);
+          }}
+        >
+          <fieldset className="form-section">
+            <legend className="eyebrow">01 / FEEL IT OUT</legend>
+            <h2>One mood. Or a few.</h2>
+            <p>Pick the feelings you want to bring into the mix.</p>
+            <div className="chips">
+              {VIBE_PRESETS.map((vibe) => (
+                <button
+                  className="chip"
+                  key={vibe}
+                  type="button"
+                  aria-pressed={state.vibes.includes(vibe)}
+                  onClick={() =>
+                    setState((prev) => ({
+                      ...prev,
+                      vibes: toggleSelection(prev.vibes, vibe),
+                    }))
+                  }
                 >
-                  <div>
-                    <p className="text-sm font-medium text-zinc-900">{preset.name}</p>
-                    <p className="text-xs text-zinc-600">
-                      {new Date(preset.createdAt).toLocaleDateString()}
-                    </p>
-                  </div>
-                  <div className="flex gap-2">
+                  {state.vibes.includes(vibe) && (
+                    <Icon name="check" width="14" height="14" />
+                  )}
+                  {vibe}
+                </button>
+              ))}
+            </div>
+          </fieldset>
+          <fieldset className="form-section">
+            <legend className="eyebrow">02 / FIND YOUR SOUND</legend>
+            <h2>Add some flavor.</h2>
+            <p>Choose genres to guide your search. Mixing is encouraged.</p>
+            <div className="chips">
+              {CURATED_GENRES.map((genre) => (
+                <button
+                  className="chip"
+                  key={genre}
+                  type="button"
+                  aria-pressed={state.genres.includes(genre)}
+                  onClick={() =>
+                    setState((prev) => ({
+                      ...prev,
+                      genres: toggleSelection(prev.genres, genre),
+                    }))
+                  }
+                >
+                  {state.genres.includes(genre) && (
+                    <Icon name="check" width="14" height="14" />
+                  )}
+                  {genre}
+                </button>
+              ))}
+            </div>
+          </fieldset>
+          <div className="field">
+            <label htmlFor="track-count">Playlist length</label>
+            <select
+              id="track-count"
+              value={state.trackCount}
+              onChange={(event) =>
+                setState((prev) => ({
+                  ...prev,
+                  trackCount: Number(event.target.value),
+                }))
+              }
+            >
+              {![...TRACK_COUNT_OPTIONS].includes(
+                state.trackCount as 20 | 30 | 50,
+              ) && (
+                <option value={state.trackCount}>
+                  {state.trackCount} tracks
+                </option>
+              )}
+              {TRACK_COUNT_OPTIONS.map((count) => (
+                <option key={count} value={count}>
+                  {count} tracks
+                </option>
+              ))}
+            </select>
+            <p className="field-hint">
+              We’ll look for this many tracks. Available matches may vary.
+            </p>
+          </div>
+          <label className="check-label">
+            <input
+              type="checkbox"
+              checked={state.explicit}
+              onChange={(event) =>
+                setState((prev) => ({
+                  ...prev,
+                  explicit: event.target.checked,
+                }))
+              }
+            />
+            Include explicit tracks
+          </label>
+          <p className="unsupported-note">
+            Mood and genre guide catalog matches. Precise energy, tempo, and
+            emotional analysis aren’t available, so those controls are not
+            applied.
+          </p>
+          {formError && (
+            <p role="alert" className="notice notice-error">
+              {formError}
+            </p>
+          )}
+          <button className="button button-primary" type="submit">
+            <Icon name="spark" />
+            Generate Playlist <Icon name="arrow" />
+          </button>
+        </form>
+        <aside className="studio-sidebar" aria-label="Your presets">
+          <section className="panel">
+            <div className="panel-heading">
+              <h2 className="panel-title">Save the feeling.</h2>
+              <span className="step-number">{presets.length} / 20</span>
+            </div>
+            <p className="muted text-xs mb-5">
+              Keep this combination for another day.
+            </p>
+            <form
+              className="preset-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                handleSavePreset();
+              }}
+            >
+              <div className="field">
+                <label htmlFor="preset-name">Preset name</label>
+                <input
+                  id="preset-name"
+                  maxLength={100}
+                  value={presetName}
+                  onChange={(event) => setPresetName(event.target.value)}
+                  placeholder="Sunday, on repeat"
+                />
+              </div>
+              <button
+                className="button button-secondary button-small"
+                type="submit"
+              >
+                Save Preset <Icon name="check" width="16" height="16" />
+              </button>
+            </form>
+            {presetError && (
+              <p role="alert" className="notice notice-error">
+                {presetError}
+              </p>
+            )}
+            {presetMessage && (
+              <p role="status" className="field-hint">
+                {presetMessage}
+              </p>
+            )}
+            {presets.length ? (
+              <ul className="preset-list">
+                {presets.map((preset) => (
+                  <li key={preset.id}>
+                    <div>
+                      <strong>{preset.name}</strong>
+                      <small>
+                        {[
+                          ...preset.settings.vibes,
+                          ...preset.settings.genres,
+                        ].join(" · ")}
+                      </small>
+                    </div>
                     <button
+                      className="chip"
                       type="button"
                       onClick={() => handleApplyPreset(preset)}
-                      className="rounded-full border border-zinc-300 px-3 py-1.5 text-xs text-zinc-700 hover:bg-zinc-100"
+                      aria-label={`Apply ${preset.name}`}
                     >
                       Apply
                     </button>
                     <button
+                      className="icon-button"
                       type="button"
                       onClick={() => handleDeletePreset(preset.id)}
-                      className="rounded-full border border-red-300 px-3 py-1.5 text-xs text-red-700 hover:bg-red-50"
+                      aria-label={`Delete ${preset.name}`}
                     >
-                      Delete
+                      <Icon name="close" width="16" height="16" />
                     </button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-xs text-zinc-600">No presets yet.</p>
-          )}
-        </div>
-
-        <fieldset className="space-y-3">
-          <legend className="text-sm font-medium text-zinc-900">Vibe / Mood Presets</legend>
-          <div className="flex flex-wrap gap-2" role="group" aria-label="Vibe mood presets">
-            {VIBE_PRESETS.map((vibe) => {
-              const active = state.vibes.includes(vibe);
-              return (
-                <button
-                  key={vibe}
-                  type="button"
-                  aria-pressed={active}
-                  onClick={() =>
-                    setState((prev) => ({ ...prev, vibes: toggleSelection(prev.vibes, vibe) }))
-                  }
-                  className={`rounded-full px-4 py-2 text-sm transition-colors ${
-                    active ? "bg-zinc-900 text-white" : "bg-zinc-100 text-zinc-700 hover:bg-zinc-200"
-                  }`}
-                >
-                  {vibe}
-                </button>
-              );
-            })}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="preset-empty">
+                Your favorite combinations will live here.
+              </p>
+            )}
+            <p className="field-hint">Presets are stored in this browser.</p>
+          </section>
+          <div className="studio-note">
+            <h3>Make room for a surprise.</h3>
+            <p>
+              Review your tracks before saving. In results, lock a favorite to
+              keep it through the next generation.
+            </p>
+            <Link className="inline-link mt-4" href="/vibe/history">
+              Revisit your mixes <Icon name="arrow" />
+            </Link>
           </div>
-        </fieldset>
-
-        <div className="space-y-2.5">
-          <label htmlFor="energy-slider" className="block text-sm font-medium text-zinc-900">
-            Energy: <span className="font-semibold">{state.energy}</span>
-          </label>
-          <input
-            id="energy-slider"
-            type="range"
-            min={0}
-            max={100}
-            value={state.energy}
-            onChange={(event) =>
-              setState((prev) => ({ ...prev, energy: Number(event.target.value) }))
-            }
-            className="w-full"
-          />
-        </div>
-
-        <div className="space-y-2.5">
-          <label htmlFor="valence-slider" className="block text-sm font-medium text-zinc-900">
-            Valence: <span className="font-semibold">{state.valence}</span>
-          </label>
-          <input
-            id="valence-slider"
-            type="range"
-            min={0}
-            max={100}
-            value={state.valence}
-            onChange={(event) =>
-              setState((prev) => ({ ...prev, valence: Number(event.target.value) }))
-            }
-            className="w-full"
-          />
-        </div>
-
-        <div className="space-y-2.5">
-          <label htmlFor="tempo-select" className="block text-sm font-medium text-zinc-900">
-            Tempo
-          </label>
-          <select
-            id="tempo-select"
-            value={state.tempo}
-            onChange={(event) =>
-              setState((prev) => ({ ...prev, tempo: event.target.value as TempoOption }))
-            }
-            className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900"
-          >
-            {TEMPO_OPTIONS.map((tempo) => (
-              <option key={tempo} value={tempo}>
-                {tempo}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <fieldset className="space-y-3">
-          <legend className="text-sm font-medium text-zinc-900">Genres</legend>
-          <div className="flex flex-wrap gap-2" role="group" aria-label="Music genres">
-            {CURATED_GENRES.map((genre) => {
-              const active = state.genres.includes(genre);
-              return (
-                <button
-                  key={genre}
-                  type="button"
-                  aria-pressed={active}
-                  onClick={() =>
-                    setState((prev) => ({ ...prev, genres: toggleSelection(prev.genres, genre) }))
-                  }
-                  className={`rounded-full px-3 py-2 text-sm transition-colors ${
-                    active ? "bg-zinc-900 text-white" : "bg-zinc-100 text-zinc-700 hover:bg-zinc-200"
-                  }`}
-                >
-                  {genre}
-                </button>
-              );
-            })}
-          </div>
-        </fieldset>
-
-        <div className="space-y-2.5">
-          <label htmlFor="track-count" className="block text-sm font-medium text-zinc-900">
-            Track Count
-          </label>
-          <select
-            id="track-count"
-            value={state.trackCount}
-            onChange={(event) =>
-              setState((prev) => ({ ...prev, trackCount: Number(event.target.value) }))
-            }
-            className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900"
-          >
-            {TRACK_COUNT_OPTIONS.map((count) => (
-              <option key={count} value={count}>
-                {count}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <label htmlFor="explicit-toggle" className="flex items-center gap-2 text-sm text-zinc-900">
-          <input
-            id="explicit-toggle"
-            type="checkbox"
-            checked={state.explicit}
-            onChange={(event) => setState((prev) => ({ ...prev, explicit: event.target.checked }))}
-          />
-          Allow explicit tracks
-        </label>
-
-        <a
-          href={`/vibe/results?${resultQuery}`}
-          className="inline-flex w-full items-center justify-center rounded-full bg-zinc-900 px-5 py-3 text-sm font-medium text-white hover:bg-zinc-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-500 sm:w-auto"
-        >
-          Generate
-        </a>
-        <a
-          href="/vibe/history"
-          className="inline-flex w-full items-center justify-center rounded-full border border-zinc-300 px-5 py-3 text-sm font-medium text-zinc-700 hover:bg-zinc-100 sm:w-auto"
-        >
-          View History
-        </a>
-      </section>
+        </aside>
+      </div>
     </main>
   );
 }
