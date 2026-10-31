@@ -1,4 +1,4 @@
-# Spotify flow after Phase 2
+# Spotify integration architecture (Phases 1–6)
 
 ## Authentication
 
@@ -14,16 +14,17 @@ Requested scopes: playlist-modify-private, playlist-modify-public, playlist-read
 ## Generation
 
 - /generate posts to /api/generate. /vibe/results posts to /api/vibe/generate. /api/spotify/search-tracks supports catalog lookup.
-- Both flows use src/lib/spotify/catalog.ts: Search pages of at most ten, bounded request budgets, offset pagination, URI/ID deduplication, and explicit/playability filtering.
+- Both flows use src/lib/spotify/catalog.ts: Search pages of at most ten, bounded request budgets, offset pagination, URI/ID/recording deduplication, and explicit/playability filtering. Source ranks are interleaved before deterministic artist-diversity selection from a bounded candidate pool.
 - Primary preferences use exact artist resolution when possible; inexact artist matches are not silently selected. Advanced references use individual track metadata and their artists.
 - Mood presets guide genre/metadata queries. These are catalog matches, not measured audio similarity. Recommendations and Audio Features endpoints are no longer called. Energy, valence, and tempo controls are disabled and explained.
 - Authentication, access, quota, rate-limit, and service failures retain useful HTTP statuses and Retry-After. Empty/short successful results are distinct from API failures.
+- Both generation screens combine navigation cancellation with a 90-second browser deadline. Server requests retain individual timeouts and a bounded search budget; browser cancellation does not guarantee cancellation of server work already running.
 - usePlaylistDraft persists reviewable tracks and save state. Advanced results initialize once per settings query; lock/shuffle/edit events do not start generation. Explicit regeneration replaces the draft only after a successful nonempty response.
 
 ## Saving and recovery
 
 1. Both UIs use src/components/vibe/usePlaylistDraft.ts. The hook persists a pending save before submitting, guards repeated clicks, and uses browser locks when available to coordinate tabs for that draft.
-2. POST /api/vibe/save requires same-origin requests, validates payloads, and checks visibility-specific write scopes plus private playlist reading.
+2. POST /api/vibe/save requires Origin to match APP_BASE_URL (or APP_URL fallback), validates payloads, and checks visibility-specific write scopes plus private playlist reading.
 3. src/lib/playlist/save.ts obtains the current user from /me, creates with POST /me/playlists, and inserts with POST /playlists/{id}/items in batches of at most 100.
 4. A bounded process-local operation journal coalesces repeat submissions. This supplements browser state; it is not a distributed exactly-once guarantee.
 5. Once creation returns an ID, insertion failures include a signed recovery receipt bound to playlist, owner, immutable draft contents, and expiry. There are no automatic append retries or silent explicit-track removals.
@@ -39,4 +40,4 @@ The legacy /api/playlists/[playlistId]/add-tracks route requires a signed recove
 - src/lib/config/app-url.ts: explicit production origin, matching callback, HTTPS or local loopback, restricted return paths.
 - src/lib/storage/playlist-draft.ts and vibe-data.ts: runtime validation and storage-failure handling.
 
-See [the Phase 2 report](phase-2-reliability.md) for configuration, verification, manual Spotify tests, and remaining limitations.
+See [Phase 6 release readiness](phase-6-release-readiness.md) for the current release decision and live acceptance gate. Historical audit and implementation reports are indexed in [the documentation overview](README.md).

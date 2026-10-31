@@ -2,7 +2,26 @@
 
 A mood-led Spotify playlist builder: explore catalog matches, review your mix, and save it to your Spotify account.
 
-[Live application](https://vibe-play-livid.vercel.app/) · [Phase 5 validation and acceptance checklist](docs/phase-5-readiness.md)
+[Live application](https://vibe-play-livid.vercel.app/) · [Release readiness](docs/phase-6-release-readiness.md) · [Architecture](docs/spotify-flow-map.md)
+
+**Release status:** live Spotify acceptance, production configuration sign-off, and a development-dependency advisory disposition are pending. The live URL is not evidence that this release candidate has been deployed or that every Spotify account can use it.
+
+## Application preview
+
+Actual unauthenticated landing screens captured from the local production build; no account data or simulated playlists are shown.
+
+![VibePlay desktop landing page](docs/screenshots/landing-desktop.png)
+
+<details>
+<summary>Mobile preview</summary>
+
+![VibePlay mobile landing page](docs/screenshots/landing-mobile.png)
+
+</details>
+
+## Portfolio description
+
+VibePlay turns a mood and catalog preferences into a reviewable Spotify playlist. Built with Next.js, React, and TypeScript, it combines accessible responsive UI with server-side PKCE authentication, encrypted sessions, quota-aware catalog selection, and cautious playlist recovery. The engineering focus is preserving user intent and handling uncertain external API outcomes without blindly duplicating playlists.
 
 ## Features
 
@@ -60,6 +79,12 @@ A publicly hosted site does not grant public Spotify API access. [Development Mo
 
 VibePlay uses catalog search and individual catalog lookups, not restricted Recommendations, related-artists, or audio-feature endpoints. Mood mapping is a genre heuristic; energy, happiness, tempo, and musical similarity are not inferred. See Spotify's [2024 endpoint restrictions](https://developer.spotify.com/blog/2024-11-27-changes-to-the-web-api), [2026 API changes](https://developer.spotify.com/documentation/web-api/references/changes/february-2026), and [search filters](https://developer.spotify.com/documentation/web-api/reference/search). Actual access depends on your registered application; verify it with an authorized account.
 
+## Production requirements
+
+The intended canonical origin is `https://vibe-play-livid.vercel.app`; register the exact callback `https://vibe-play-livid.vercel.app/api/auth/callback`. Confirm Node 24, the Next.js framework preset, `npm ci`, `npm run build`, server-only credentials, Spotify account access, and Vercel function duration in their dashboards. No repository file confirms those remote values.
+
+The [release report](docs/phase-6-release-readiness.md) contains configuration, approved deployment, smoke-test, and rollback instructions. Production release stays blocked until the [live Spotify acceptance checklist](docs/live-spotify-acceptance.md) is signed off. An automated browser test can pass while the real Spotify app still rejects an account.
+
 ## Verification
 
 Run checks individually:
@@ -88,4 +113,4 @@ To print the synthetic quality measurements:
 npm test -- src/lib/playlist/quality-scenarios.test.ts --disableConsoleIntercept --reporter=verbose
 ```
 
-Passing automated checks is not live Spotify certification. Follow the [manual acceptance checklist](docs/phase-5-readiness.md) before claiming production readiness or inviting portfolio reviewers to authenticate.
+Passing automated checks is not live Spotify certification. Follow the [manual acceptance checklist](docs/live-spotify-acceptance.md) before claiming production readiness or inviting portfolio reviewers to authenticate.
