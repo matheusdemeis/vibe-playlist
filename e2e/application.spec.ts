@@ -159,6 +159,11 @@ test("production landing lab measurements", async ({ page }, testInfo) => {
   });
   console.log("PERFORMANCE_LAB " + JSON.stringify(measured));
   await testInfo.attach("production-lab.json", { body: JSON.stringify(measured, null, 2), contentType: "application/json" });
+  // Capture the real, unauthenticated landing UI for reviewed portfolio assets.
+  await page.evaluate(() => document.fonts.ready);
+  await page.screenshot({ path: testInfo.outputPath("landing-mobile.png") });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.screenshot({ path: testInfo.outputPath("landing-desktop.png") });
 });
 
 test("generation timeout releases loading state without retrying (mocked)", async ({ page }) => {
